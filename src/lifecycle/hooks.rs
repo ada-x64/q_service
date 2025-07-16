@@ -9,27 +9,49 @@ macro_rules! hooks {
             $(
                 #[allow(missing_docs)]
                 #[derive(Deref, DerefMut, Debug)]
-                pub struct [<$name Fn>]<E: ServiceError>(
+                pub struct [<$name Fn>]<T,D,E>(
+                    #[deref]
                     Box<dyn System<In = $in, Out = $out>>,
-                );
-                impl<E: ServiceError> [<$name Fn>]<E> {
+                    ServiceHandle<T,D,E>
+                ) where
+                    T: ServiceLabel,
+                    D: ServiceData,
+                    E: ServiceError;
+
+                impl<T,D,E> [<$name Fn>]<T,D,E>
+                where
+                    T: ServiceLabel,
+                    D: ServiceData,
+                    E: ServiceError
+                {
                     #[allow(missing_docs)]
                     pub fn new<M, S: IntoSystem<$in, $out, M>>(s: S) -> Self {
-                        Self(Box::new(IntoSystem::into_system(s)))
+                        Self(Box::new(IntoSystem::into_system(s)), ServiceHandle::const_default())
                     }
                 }
-                impl<E: ServiceError> Default for [<$name Fn>]<E> {
+
+                impl<T,D,E> Default for [<$name Fn>]<T,D,E>
+                where
+                    T: ServiceLabel,
+                    D: ServiceData,
+                    E: ServiceError
+                {
                     fn default() -> Self {
                         Self::new($default)
                     }
                 }
                 #[allow(missing_docs)]
-                pub trait [<Into $name Fn>]<E: ServiceError, M>:
+                pub trait [<Into $name Fn>]<T,D,E, M>:
                     IntoSystem<$in, $out, M>
+                    where
+                        T: ServiceLabel,
+                        D: ServiceData,
+                        E: ServiceError
                 {
                 }
-                impl<E: ServiceError, M, T> [<Into $name Fn>]<E, M> for T where
-                    T: IntoSystem<$in, $out, M>
+                impl<T, D, E, M, S> [<Into $name Fn>]<T, D, E, M> for S where
+                    S: IntoSystem<$in, $out, M>,
+                    T: ServiceLabel, D: ServiceData, E: ServiceError
                 {
                 }
             )*
@@ -42,25 +64,32 @@ hooks!(
     (Enable, (), Result<(), E>, || Ok(())),
     (Disable, (), Result<(), E>, || Ok(())),
     (Failure, In<ServiceErrorKind<E>>, (), |e: In<ServiceErrorKind<E>>| {error!("Service error: {e:?}");}),
+    (Update, In<D>, Result<D, E>, |d: In<D>| Ok(d.clone())),
 );
 
 /// Contains hooks for the given service. See module-level documentation for
 /// details.
 #[derive(Debug)]
-pub struct ServiceHooks<E>
+pub struct ServiceHooks<T, D, E>
 where
+    T: ServiceLabel,
+    D: ServiceData,
     E: ServiceError,
 {
     /// Hook which executes on initialization. Will forward to
     /// [on_enable](Self::on_enable) or [on_disable](Self::on_disable) when
     /// finished.
-    pub on_init: InitFn<E>,
+    pub on_init: InitFn<T, D, E>,
     /// Hook which executes on enable. Will initialize if needed.
-    pub on_enable: EnableFn<E>,
+    pub on_enable: EnableFn<T, D, E>,
     /// Hook which executes on disable. Will warn if uninitialized.
-    pub on_disable: DisableFn<E>,
+    pub on_disable: DisableFn<T, D, E>,
+    /// Hook which executes when the stored data is changed. This executes _before_ the data has been updated, giving you the chance to transform it.
+    /// To react to data changes _after_ they have been updated, use [OnServiceUpdate]
+    // TODO: There should be a difference between the input type to this function and the interally stored data type.
+    pub on_update: UpdateFn<T, D, E>,
     /// Hook which executes on failure.
-    pub on_failure: FailureFn<E>,
+    pub on_failure: FailureFn<T, D, E>,
 }
 macro_rules! on {
     ($($name:ident),*) => {
@@ -69,7 +98,7 @@ macro_rules! on {
                 #[allow(missing_docs)]
                 pub fn [<on_ $name:snake:lower>]<S, M>(self, s: S) -> Self
                 where
-                    S: [<Into $name:camel Fn>]<E, M>
+                    S: [<Into $name:camel Fn>]<T, D, E, M> // "Tedium"
                 {
                     Self {
                         [<on_ $name:snake:lower>]: [<$name Fn>]::new(s),
@@ -81,17 +110,28 @@ macro_rules! on {
     };
 }
 
-impl<E: ServiceError> ServiceHooks<E> {
-    on!(Init, Enable, Disable, Failure);
+impl<T, D, E> ServiceHooks<T, D, E>
+where
+    T: ServiceLabel,
+    D: ServiceData,
+    E: ServiceError,
+{
+    on!(Init, Enable, Disable, Failure, Update);
 }
 // note: E is not Default so can't derive this
-impl<E: ServiceError> Default for ServiceHooks<E> {
+impl<T, D, E> Default for ServiceHooks<T, D, E>
+where
+    T: ServiceLabel,
+    D: ServiceData,
+    E: ServiceError,
+{
     fn default() -> Self {
         Self {
             on_init: InitFn::default(),
             on_enable: EnableFn::default(),
             on_disable: DisableFn::default(),
             on_failure: FailureFn::default(),
+            on_update: UpdateFn::default(),
         }
     }
 }

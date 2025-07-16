@@ -14,20 +14,22 @@ pub struct ServiceSpec<T: ServiceLabel, D: ServiceData, E: ServiceError> {
     /// The data provided on startup.
     pub(crate) initial_data: Option<D>,
     /// Lifecycle hook
-    pub(crate) on_init: Option<InitFn<E>>,
+    pub(crate) on_init: Option<InitFn<T, D, E>>,
     /// Lifecycle hook
-    pub(crate) on_enable: Option<EnableFn<E>>,
+    pub(crate) on_enable: Option<EnableFn<T, D, E>>,
     /// Lifecycle hook
-    pub(crate) on_disable: Option<DisableFn<E>>,
+    pub(crate) on_disable: Option<DisableFn<T, D, E>>,
     /// Lifecycle hook
-    pub(crate) on_failure: Option<FailureFn<E>>,
+    pub(crate) on_update: Option<UpdateFn<T, D, E>>,
+    /// Lifecycle hook
+    pub(crate) on_failure: Option<FailureFn<T, D, E>>,
 }
 macro_rules! on {
     ($($name:ident),*) => {
         $crate::paste::paste! {
             $(
                 /// Hook for this lifecycle stage.
-                pub fn [<on_ $name:snake:lower>]<M>(self, s: impl [<Into $name:camel Fn>]<E, M>) -> Self {
+                pub fn [<on_ $name:snake:lower>]<M>(self, s: impl [<Into $name:camel Fn>]<T,D,E, M>) -> Self {
                     Self {
                         [< on_ $name:snake:lower >]: Some([<$name:camel Fn>]::new(s)),
                         ..self
@@ -54,6 +56,7 @@ where
             on_enable: None,
             on_disable: None,
             on_failure: None,
+            on_update: None,
         }
     }
 }

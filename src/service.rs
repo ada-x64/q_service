@@ -11,7 +11,7 @@ pub struct Service<T: ServiceLabel, D: ServiceData, E: ServiceError> {
     /// Arbitrary data store.
     pub data: D,
     /// Lifecycle hooks.
-    pub hooks: ServiceHooks<E>,
+    pub hooks: ServiceHooks<T, D, E>,
     /// The current state of the service.
     pub state: ServiceState<E>,
     /// Has this service been initialized?
@@ -46,6 +46,7 @@ where
                 on_enable: spec.on_enable.unwrap_or_default(),
                 on_disable: spec.on_disable.unwrap_or_default(),
                 on_failure: spec.on_failure.unwrap_or_default(),
+                on_update: spec.on_update.unwrap_or_default(),
             },
             handle: ServiceHandle::const_default(),
             deps: spec.deps,
@@ -158,6 +159,34 @@ where
             }
         }
     }
+
+    pub(crate) fn on_update(
+        &mut self,
+        world: &mut World,
+        data: D,
+    ) -> Result<(), ServiceErrorKind<E>> {
+        self.hooks.on_update.initialize(world);
+        let res = self
+            .hooks
+            .on_update
+            .run_without_applying_deferred(data, world);
+        match res {
+            Ok(data) => {
+                self.data = data;
+                Ok(())
+            }
+            Err(e) => {
+                let error = ServiceErrorKind::Own(e);
+                self.on_failure(world, error.clone(), false);
+                Err(error)
+            }
+        }
+    }
+
+    pub(crate) fn on_fail_cmd(&mut self, world: &mut World, error: ServiceErrorKind<E>) {
+        self.on_failure(world, error, false);
+    }
+
     /// Handles errors. If `is_warning`, the service's state will not change.
     pub(crate) fn on_failure(
         &mut self,

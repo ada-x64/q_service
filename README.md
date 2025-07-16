@@ -1,9 +1,9 @@
  # q_service
 
 [![License](https://img.shields.io/badge/license-MIT%2FApache-blue.svg)](https://github.com/bevyengine/bevy#license)
-[![Crates.io](https://img.shields.io/crates/v/q_service.svg)](https://crates.io/crates/bevy)
-[![Downloads](https://img.shields.io/crates/d/q_service.svg)](https://crates.io/crates/bevy)
-[![Docs](https://docs.rs/q_service/badge.svg)](https://docs.rs/bevy/latest/bevy/)
+[![Crates.io](https://img.shields.io/crates/v/q_service.svg)](https://crates.io/crates/q_service)
+[![Downloads](https://img.shields.io/crates/d/q_service.svg)](https://crates.io/crates/q_service)
+[![Docs](https://docs.rs/q_service/badge.svg)](https://docs.rs/q_service/latest/q_service/)
 [![CI](https://github.com/ada_x64/q_service/workflows/CI/badge.svg)](https://github.com/ada-x64/q_service/actions)
 [![codecov](https://codecov.io/github/ada-x64/q_service/graph/badge.svg?token=2gqZobeujo)](https://codecov.io/github/ada-x64/q_service)
 [![enbyware](https://pride-badges.pony.workers.dev/static/v1?label=enbyware&labelColor=%23555&stripeWidth=8&stripeColors=FCF434%2CFFFFFF%2C9C59D1%2C2C2C2C "they/she")](https://en.pronouns.page/are/they&she)

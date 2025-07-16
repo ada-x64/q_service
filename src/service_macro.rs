@@ -56,7 +56,7 @@ macro_rules! service {
                 impl ServiceLabel for [<$t Label>] {}
                 pub type [<$t Spec>]= ServiceSpec<[<$t Label>], $d, $e>;
                 pub type [<$t>] = Service<[<$t Label>], $d, $e>;
-                pub type [<$t Hooks>] = ServiceHooks<$e>;
+                pub type [<$t Hooks>] = ServiceHooks<$t,$d,$e>;
                 /// Track service state changes. Inner value is a tuple, (previous_state, current_state).
                 pub type [<$t StateChange>] = ServiceStateChange<[<$t Label>], $d, $e>;
                 pub type [<Enter $t State>] = EnterServiceState<[<$t Label>], $d, $e>;
