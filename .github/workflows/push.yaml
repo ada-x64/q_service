@@ -49,3 +49,9 @@ jobs:
           files: lcov.info
           fail_ci_if_error: true
           slug: ada-x64/q_service
+
+      - name: Upload test results to Codecov
+        if: ${{ !cancelled() }}
+        uses: codecov/test-results-action@v1
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}

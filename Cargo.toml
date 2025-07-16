@@ -1,8 +1,11 @@
 [package]
 name = "q_service"
+description = "Services for Bevy"
 version = "0.1.0"
 authors = ["<phoenix.mandala@pm.me>"]
 edition = "2024"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/ada-x64/q_service"
 
 [features]
 derive = ["dep:q_service_macros"]
