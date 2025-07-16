@@ -1,32 +1,12 @@
-use bevy::{log::LogPlugin, prelude::*};
+use bevy::prelude::*;
 use q_service::prelude::*;
-
-#[derive(ServiceError, Debug, thiserror::Error, Clone, Copy, PartialEq)]
-enum TestErr {
-    #[error("A")]
-    A,
-}
-
-service!(TestService, (), TestErr);
-
-fn setup() -> App {
-    let mut app = App::new();
-    app.add_plugins((
-        MinimalPlugins,
-        LogPlugin {
-            filter: "debug".into(),
-            ..Default::default()
-        },
-    ))
-    .add_systems(Startup, || debug!("STARTUP"))
-    .add_systems(Update, || debug!("UPDATE"));
-    app
-}
+mod common;
+use common::*;
 
 #[test]
 fn simple() {
     let mut app = setup();
-    app.add_service(TestService::spec());
+    app.add_service(TestService::default_spec());
     app.update();
     let world = app.world_mut();
     let s = world.resource_mut::<TestService>();
@@ -36,7 +16,7 @@ fn simple() {
 #[test]
 fn hook_failure() {
     let mut app = setup();
-    app.add_service(TestService::spec().is_startup(true).on_init(|| {
+    app.add_service(TestService::default_spec().is_startup(true).on_init(|| {
         info!("In hook");
         Err(TestErr::A)
     }));
@@ -52,7 +32,7 @@ fn hook_failure() {
 #[test]
 fn manual_init() {
     let mut app = setup();
-    app.add_service(TestService::spec());
+    app.add_service(TestService::default_spec());
     app.update();
     app.world_mut()
         .commands()
@@ -75,7 +55,7 @@ pub struct TestHooks {
 fn hooks() {
     let mut app = setup();
     app.init_resource::<TestHooks>();
-    let spec = TestService::spec()
+    let spec = TestService::default_spec()
         .is_startup(true)
         .on_init(|mut hooks_ran: ResMut<TestHooks>| {
             debug!("init");
@@ -93,8 +73,7 @@ fn hooks() {
             Err(TestErr::A)
         })
         .on_failure(
-            |_err: In<ServiceErrorKind<TestErr>>,
-             mut hooks_ran: ResMut<TestHooks>| {
+            |_err: In<ServiceErrorKind<TestErr>>, mut hooks_ran: ResMut<TestHooks>| {
                 debug!("failure");
                 hooks_ran.fail = true;
             },
@@ -105,6 +84,7 @@ fn hooks() {
     app.world_mut()
         .commands()
         .disable_service(TestService::handle());
+    app.update();
     assert_eq!(
         app.world_mut().resource::<TestHooks>(),
         &TestHooks {
@@ -122,10 +102,8 @@ fn events() {
     app.init_resource::<TestHooks>();
     // NOTE: This fails with `is_startup(true)`. Probably because observers need
     // to be instantiated before events can fire.
-    app.add_service(TestService::spec()).add_observer(
-        |t: Trigger<TestServiceStateChange>,
-         mut r: ResMut<TestHooks>,
-         mut commands: Commands| {
+    app.add_service(TestService::default_spec()).add_observer(
+        |t: Trigger<TestServiceStateChange>, mut r: ResMut<TestHooks>, mut commands: Commands| {
             match t.event().0.1 {
                 ServiceState::Initializing => {
                     r.init = true;
@@ -136,10 +114,7 @@ fn events() {
                 }
                 ServiceState::Disabled => {
                     r.disable = true;
-                    commands.fail_service(
-                        TestService::handle(),
-                        ServiceErrorKind::Own(TestErr::A),
-                    );
+                    commands.fail_service(TestService::handle(), ServiceErrorKind::Own(TestErr::A));
                 }
                 ServiceState::Failed(_) => r.fail = true,
                 _ => {}
@@ -188,7 +163,7 @@ macro_rules! check_run_condition {
 fn run_conditions() {
     let mut app = setup();
     app.init_resource::<Ran>();
-    app.add_service(TestService::spec());
+    app.add_service(TestService::default_spec());
     app.add_systems(
         Update,
         (|mut ran: ResMut<Ran>| {
@@ -253,7 +228,7 @@ struct Errors(Vec<ServiceErrorKind<TestErr>>);
 #[test]
 fn uninitialized() {
     let mut app = setup();
-    app.add_service(TestService::spec().on_failure(
+    app.add_service(TestService::default_spec().on_failure(
         |e: In<_>, mut errs: ResMut<Errors>| {
             errs.0.push(e.0);
         },

@@ -55,14 +55,10 @@ where
 
     /// Initializes the service. Depending on the result of the hook, it will
     /// then either enable or disable the service. Handles errors.
-    pub(crate) fn on_init(
-        &mut self,
-        world: &mut World,
-    ) -> Result<(), ServiceErrorKind<E>> {
+    pub(crate) fn on_init(&mut self, world: &mut World) -> Result<(), ServiceErrorKind<E>> {
         debug!("Initializing {}", self.handle);
         if self.initialized {
-            let error =
-                ServiceErrorKind::AlreadyInitialized(self.handle.to_string());
+            let error = ServiceErrorKind::AlreadyInitialized(self.handle.to_string());
             self.on_failure(world, error.clone(), true);
             return Err(error);
         }
@@ -72,16 +68,17 @@ where
         // initialize dependencies
         for dep in self.deps.iter_mut() {
             let info = dep.info(world);
-            if info.is_service && !info.is_initialized {
-                if let Err(e) = dep.initialize(world) {
-                    let error = ServiceErrorKind::Dependency(
-                        ServiceHandle::from_service(self).to_string(),
-                        info.display_name,
-                        e.to_string(),
-                    );
-                    self.on_failure(world, error.clone(), false);
-                    return Err(error);
-                }
+            if !info.is_service || info.is_initialized {
+                continue;
+            }
+            if let Err(e) = dep.initialize(world) {
+                let error = ServiceErrorKind::Dependency(
+                    ServiceHandle::from_service(self).to_string(),
+                    info.display_name,
+                    e.to_string(),
+                );
+                self.on_failure(world, error.clone(), false);
+                return Err(error);
             }
         }
 
@@ -110,10 +107,7 @@ where
         }
     }
     /// Enables the service. If it is not already initialized, this will do so.
-    pub(crate) fn on_enable(
-        &mut self,
-        world: &mut World,
-    ) -> Result<(), ServiceErrorKind<E>> {
+    pub(crate) fn on_enable(&mut self, world: &mut World) -> Result<(), ServiceErrorKind<E>> {
         debug!("Enabling {}", self.handle);
         if !self.initialized {
             return self.on_init(world);
@@ -138,14 +132,10 @@ where
         }
     }
     /// Disables the service if possible.
-    pub(crate) fn on_disable(
-        &mut self,
-        world: &mut World,
-    ) -> Result<(), ServiceErrorKind<E>> {
+    pub(crate) fn on_disable(&mut self, world: &mut World) -> Result<(), ServiceErrorKind<E>> {
         debug!("Disabling {}", self.handle);
         if !self.initialized {
-            let error =
-                ServiceErrorKind::Uninitialized(self.handle.to_string());
+            let error = ServiceErrorKind::Uninitialized(self.handle.to_string());
             self.on_failure(world, error.clone(), true);
             return Err(error);
         }
@@ -189,11 +179,7 @@ where
         self.hooks.on_failure.apply_deferred(world);
     }
 
-    pub(crate) fn set_state(
-        &mut self,
-        world: &mut World,
-        state: ServiceState<E>,
-    ) {
+    pub(crate) fn set_state(&mut self, world: &mut World, state: ServiceState<E>) {
         debug!("Setting {} state: {state:?}", self.handle);
         let old_state = self.state.clone();
         self.state = state.clone();

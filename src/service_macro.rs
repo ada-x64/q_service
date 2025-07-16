@@ -51,10 +51,11 @@ macro_rules! service {
                 use $crate::prelude::*;
                 use std::marker::PhantomData;
                 /// Label for the state. Works as part of a unique identifier.
-                #[derive(ServiceLabel, PartialEq, Eq, Debug, Copy, Clone, Hash)]
+                #[derive(PartialEq, Eq, Debug, Copy, Clone, Hash)]
                 pub struct [<$t Label>];
+                impl ServiceLabel for [<$t Label>] {}
                 pub type [<$t Spec>]= ServiceSpec<[<$t Label>], $d, $e>;
-                pub type [<Example>] = Service<[<$t Label>], $d, $e>;
+                pub type [<$t>] = Service<[<$t Label>], $d, $e>;
                 pub type [<$t Hooks>] = ServiceHooks<$e>;
                 /// Track service state changes. Inner value is a tuple, (previous_state, current_state).
                 pub type [<$t StateChange>] = ServiceStateChange<[<$t Label>], $d, $e>;
