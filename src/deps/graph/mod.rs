@@ -1,8 +1,8 @@
 pub(crate) mod tarjan;
 
-use std::any::{TypeId, type_name_of_val};
+use std::sync::Mutex;
 
-use bevy_ecs::resource::Resource;
+use bevy_ecs::{component::ComponentId, resource::Resource};
 use bevy_platform::{
     collections::{HashMap, HashSet},
     hash::FixedHasher,
@@ -13,12 +13,57 @@ use thiserror::Error;
 
 use crate::{
     data::{ServiceData, ServiceError, ServiceHandle, ServiceLabel},
-    deps::ServiceDepInfo,
+    deps::ServiceDep,
 };
 
-/// TypeId of the ServiceHandles. Using this because ServiceHandle is not
-/// dyn-compatible.
-type NodeId = TypeId;
+static SERVICE_IDX: Mutex<usize> = Mutex::new(0);
+static SERVICE_MAP: Mutex<HashMap<String, usize>> = Mutex::new(HashMap::new());
+// static ASSET_IDX: Mutex<usize> = Mutex::new(0);
+// static RESOURCE_IDX: Mutex<usize> = Mutex::new(0);
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
+pub enum NodeId {
+    Service(usize),
+    Asset(usize),
+    Resource(usize),
+}
+impl std::fmt::Display for NodeId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            NodeId::Service(idx) => f.write_fmt(format_args!("Service({idx})")),
+            NodeId::Asset(idx) => f.write_fmt(format_args!("Asset({idx})")),
+            NodeId::Resource(idx) => f.write_fmt(format_args!("Resource({idx})")),
+        }
+    }
+}
+impl NodeId {
+    pub fn service<T, D, E>(handle: ServiceHandle<T, D, E>) -> Self
+    where
+        T: ServiceLabel,
+        D: ServiceData,
+        E: ServiceError,
+    {
+        let mut map = SERVICE_MAP.lock().unwrap();
+        match map.get(&handle.to_string()) {
+            Some(val) => Self::Service(*val),
+            None => {
+                let mut idx = SERVICE_IDX.lock().unwrap();
+                *idx += 1;
+                map.insert(handle.to_string(), *idx);
+                Self::Service(*idx)
+            }
+        }
+    }
+    pub fn asset() -> Self {
+        todo!()
+    }
+    pub fn resource() -> Self {
+        todo!()
+    }
+}
+#[derive(Clone, Debug, PartialEq)]
+pub struct NodeInfo {
+    pub display_name: String,
+}
 
 /// Compact storage of a [`NodeId`] and a [`Direction`].
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -50,53 +95,30 @@ impl Direction {
 }
 /// A directed acyclic graph structure used to track service dependencies.
 /// Based on [bevy_ecs::Graph]
-#[derive(Default, Resource)]
+#[derive(Default, Debug, Resource)]
 pub struct DependencyGraph {
     /// This is the storage variable.
     /// Could store the services themselves here, but they're not
     /// type-erasable, so they're stored as resources instead.
     /// Could look into how that works and just store them here anyways.
-    pub services: HashMap<NodeId, ServiceDepInfo>,
+    pub node_info: HashMap<NodeId, NodeInfo>,
     nodes: IndexMap<NodeId, Vec<NodeIdAndDir>, FixedHasher>,
     edges: HashSet<NodeIdPair, FixedHasher>,
     /// A cached topological ordering of the graph.
-    topsort: Vec<NodeId>,
+    pub(crate) topsort: Vec<NodeId>,
 }
 
 impl DependencyGraph {
-    /// Adds a service to the dependency graph. Will fail if cycles are
-    /// detected.
-    pub fn register_service<T, D, E>(
-        &mut self,
-        _handle: ServiceHandle<T, D, E>,
-        deps: Vec<ServiceDepInfo>,
-    ) -> Result<(), DagError>
-    where
-        T: ServiceLabel,
-        D: ServiceData,
-        E: ServiceError,
-    {
-        let dependent = TypeId::of::<ServiceHandle<T, D, E>>();
-        self.add_node(dependent);
-        for dep in deps.into_iter() {
-            if !self.contains_node(dep.type_id) {
-                self.add_node(dep.type_id);
-            }
-            self.add_edge(dependent, dep.type_id);
-            self.services.insert(dep.type_id, dep);
-        }
-        match self.topsort_graph() {
-            Ok(vec) => {
-                self.topsort = vec;
-                Ok(())
-            }
-            Err(e) => Err(e),
-        }
-    }
-
     /// Return the number of nodes in the graph.
     pub fn node_count(&self) -> usize {
         self.nodes.len()
+    }
+
+    pub fn add_node_from_dep(&mut self, dep: &ServiceDep) {
+        self.nodes.entry(dep.node_id()).or_default();
+        self.node_info
+            .entry(dep.node_id())
+            .or_insert(dep.node_info());
     }
 
     /// Add node `n` to the graph.
@@ -161,12 +183,7 @@ impl DependencyGraph {
     /// Remove edge relation from a to b
     ///
     /// Return `true` if it did exist.
-    fn remove_single_edge(
-        &mut self,
-        a: NodeId,
-        b: NodeId,
-        dir: Direction,
-    ) -> bool {
+    fn remove_single_edge(&mut self, a: NodeId, b: NodeId, dir: Direction) -> bool {
         let Some(sus) = self.nodes.get_mut(&a) else {
             return false;
         };
@@ -200,32 +217,26 @@ impl DependencyGraph {
 
     /// Return `true` if the edge connecting `a` with `b` is contained in the
     /// graph.
-    pub fn _contains_edge(&self, a: NodeId, b: NodeId) -> bool {
+    pub fn contains_edge(&self, a: NodeId, b: NodeId) -> bool {
         self.edges.contains(&Self::edge_key(a, b))
     }
 
     /// Return an iterator over the nodes of the graph.
     pub fn nodes(
         &self,
-    ) -> impl DoubleEndedIterator<Item = NodeId>
-    + ExactSizeIterator<Item = NodeId>
-    + '_ {
+    ) -> impl DoubleEndedIterator<Item = NodeId> + ExactSizeIterator<Item = NodeId> + '_ {
         self.nodes.keys().copied()
     }
 
     /// Return an iterator of all nodes with an edge starting from `a`.
-    pub fn neighbors(
-        &self,
-        a: NodeId,
-    ) -> impl DoubleEndedIterator<Item = NodeId> + '_ {
+    pub fn neighbors(&self, a: NodeId) -> impl DoubleEndedIterator<Item = NodeId> + '_ {
         let iter = match self.nodes.get(&a) {
             Some(neigh) => neigh.iter(),
             None => [].iter(),
         };
 
-        iter.copied().filter_map(|NodeIdAndDir(n, dir)| {
-            (dir == Direction::Outgoing).then_some(n)
-        })
+        iter.copied()
+            .filter_map(|NodeIdAndDir(n, dir)| (dir == Direction::Outgoing).then_some(n))
     }
 
     /// Return an iterator of all neighbors that have an edge between them and
@@ -242,23 +253,18 @@ impl DependencyGraph {
             None => [].iter(),
         };
 
-        iter.copied().filter_map(move |NodeIdAndDir(n, d)| {
-            (d == dir || n == a).then_some(n)
-        })
+        iter.copied()
+            .filter_map(move |NodeIdAndDir(n, d)| (d == dir || n == a).then_some(n))
     }
 
     /// Return an iterator of target nodes with an edge starting from `a`,
     /// paired with their respective edge weights.
-    pub fn _edges(
-        &self,
-        a: NodeId,
-    ) -> impl DoubleEndedIterator<Item = (NodeId, NodeId)> + '_ {
-        self.neighbors(a).map(move |b| {
-            match self.edges.get(&Self::edge_key(a, b)) {
+    pub fn _edges(&self, a: NodeId) -> impl DoubleEndedIterator<Item = (NodeId, NodeId)> + '_ {
+        self.neighbors(a)
+            .map(move |b| match self.edges.get(&Self::edge_key(a, b)) {
                 None => unreachable!(),
                 Some(_) => (a, b),
-            }
-        })
+            })
     }
 
     /// Return an iterator of target nodes with an edge starting from `a`,
@@ -293,9 +299,7 @@ impl DependencyGraph {
     }
 
     /// Iterate over all *Strongly Connected Components* in this graph.
-    pub(crate) fn iter_sccs(
-        &self,
-    ) -> impl Iterator<Item = SmallVec<[NodeId; 4]>> + '_ {
+    pub(crate) fn iter_sccs(&self) -> impl Iterator<Item = SmallVec<[NodeId; 4]>> + '_ {
         tarjan::new_tarjan_scc(self)
     }
 
@@ -313,12 +317,11 @@ impl DependencyGraph {
         // Check explicitly for self-edges.
         // `iter_sccs` won't report them as cycles because they still form
         // components of one node.
-        if let Some(NodeIdPair(node, _)) = self
+        if self
             .all_edges()
-            .find(|NodeIdPair(left, right)| left == right)
+            .any(|NodeIdPair(left, right)| left == right)
         {
-            let name = type_name_of_val(&node);
-            let error = DagError::DependencyLoop(name.into());
+            let error = DagError::DependencyLoop(String::new());
             return Err(error);
         }
 
@@ -347,9 +350,8 @@ impl DependencyGraph {
             for scc in &sccs_with_cycles {
                 cycles.append(&mut simple_cycles_in_component(self, scc));
             }
-            let error = DagError::DependencyCycle(
-                self.get_dependency_cycles_error_message(&cycles),
-            );
+            let error =
+                DagError::DependencyCycle(self.get_dependency_cycles_error_message(&cycles));
 
             Err(error)
         }
@@ -357,27 +359,24 @@ impl DependencyGraph {
 
     // TODO: Make this better!
     /// Logs details of cycles in the dependency graph.
-    fn get_dependency_cycles_error_message(
-        &self,
-        cycles: &[Vec<NodeId>],
-    ) -> String {
+    fn get_dependency_cycles_error_message(&self, cycles: &[Vec<NodeId>]) -> String {
         use std::fmt::Write;
-        let mut message =
-            format!("Service has {} before/after cycle(s):\n", cycles.len());
+        let mut message = format!("Service has {} before/after cycle(s):\n", cycles.len());
         for (i, cycle) in cycles.iter().enumerate() {
-            let mut names =
-                cycle.iter().map(|c| self.services.get(c).unwrap().type_id);
+            let mut names = cycle.iter().map(|node_id| {
+                tracing::info!("{:#?}", &self);
+                &self.node_info.get(node_id).unwrap().display_name
+            });
             let first_name = names.next().unwrap();
             writeln!(
                 message,
-                "cycle {}: `{first_name:?}` must run before itself",
+                "cycle {}: `{first_name}` must run before itself",
                 i + 1,
             )
             .unwrap();
-            writeln!(message, "`{first_name:?}`").unwrap();
+            writeln!(message, "`{first_name}`").unwrap();
             for name in names.chain(core::iter::once(first_name)) {
-                writeln!(message, " ... which must run before `{name:?}`")
-                    .unwrap();
+                writeln!(message, " ... which must run before `{name:?}`").unwrap();
             }
             writeln!(message).unwrap();
         }
@@ -394,10 +393,7 @@ impl DependencyGraph {
 /// Johnson.
 ///
 /// [1]: https://doi.org/10.1137/0204007
-pub fn simple_cycles_in_component(
-    graph: &DependencyGraph,
-    scc: &[NodeId],
-) -> Vec<Vec<NodeId>> {
+pub fn simple_cycles_in_component(graph: &DependencyGraph, scc: &[NodeId]) -> Vec<Vec<NodeId>> {
     let mut cycles = vec![];
     let mut sccs = vec![SmallVec::from_slice(scc)];
 
@@ -405,6 +401,7 @@ pub fn simple_cycles_in_component(
         // only look at nodes and edges in this strongly-connected component
         let mut subgraph = DependencyGraph::default();
         for &node in &scc {
+            // note: these are already existent nodes so this won't panic
             subgraph.add_node(node);
         }
 
@@ -420,26 +417,18 @@ pub fn simple_cycles_in_component(
         let mut path = Vec::with_capacity(subgraph.node_count());
         // we mark nodes as "blocked" to avoid finding permutations of the same
         // cycles
-        let mut blocked: HashSet<_> = HashSet::with_capacity_and_hasher(
-            subgraph.node_count(),
-            Default::default(),
-        );
+        let mut blocked: HashSet<_> =
+            HashSet::with_capacity_and_hasher(subgraph.node_count(), Default::default());
         // connects nodes along path segments that can't be part of a cycle
         // (given current root) those nodes can be unblocked at the same
         // time
         let mut unblock_together: HashMap<NodeId, HashSet<NodeId>> =
-            HashMap::with_capacity_and_hasher(
-                subgraph.node_count(),
-                Default::default(),
-            );
+            HashMap::with_capacity_and_hasher(subgraph.node_count(), Default::default());
         // stack for unblocking nodes
         let mut unblock_stack = Vec::with_capacity(subgraph.node_count());
         // nodes can be involved in multiple cycles
         let mut maybe_in_more_cycles: HashSet<NodeId> =
-            HashSet::with_capacity_and_hasher(
-                subgraph.node_count(),
-                Default::default(),
-            );
+            HashSet::with_capacity_and_hasher(subgraph.node_count(), Default::default());
         // stack for DFS
         let mut stack = Vec::with_capacity(subgraph.node_count());
 
@@ -479,8 +468,7 @@ pub fn simple_cycles_in_component(
                     // unblock this node's ancestors
                     while let Some(n) = unblock_stack.pop() {
                         if blocked.remove(&n) {
-                            let unblock_predecessors =
-                                unblock_together.entry(n).or_default();
+                            let unblock_predecessors = unblock_together.entry(n).or_default();
                             unblock_stack.extend(unblock_predecessors.iter());
                             unblock_predecessors.clear();
                         }
@@ -489,10 +477,7 @@ pub fn simple_cycles_in_component(
                     // if its descendants can be unblocked later, this node will
                     // be too
                     for successor in subgraph.neighbors(*node) {
-                        unblock_together
-                            .entry(successor)
-                            .or_default()
-                            .insert(*node);
+                        unblock_together.entry(successor).or_default().insert(*node);
                     }
                 }
 
@@ -515,8 +500,7 @@ pub fn simple_cycles_in_component(
 }
 
 /// Category of errors encountered during schedule construction.
-#[derive(Error, Debug)]
-#[non_exhaustive]
+#[derive(Error, Debug, Clone)]
 pub enum DagError {
     /// A dependency has been told to run before itself.
     #[error("Service `{0}` depends on itself.")]

@@ -1,4 +1,7 @@
-use crate::prelude::*;
+use crate::{
+    deps::{graph::DependencyGraph, register_service_dep},
+    prelude::*,
+};
 use bevy_app::prelude::*;
 use bevy_ecs::prelude::*;
 use tracing::*;
@@ -43,11 +46,10 @@ pub trait ServiceExt<T: ServiceLabel, D: ServiceData, E: ServiceError> {
     /// dependencies.
     fn add_service(&mut self, spec: ServiceSpec<T, D, E>) -> &mut Self;
 }
-impl<T: ServiceLabel, D: ServiceData, E: ServiceError> ServiceExt<T, D, E>
-    for App
-{
+impl<T: ServiceLabel, D: ServiceData, E: ServiceError> ServiceExt<T, D, E> for App {
     fn add_service(&mut self, spec: ServiceSpec<T, D, E>) -> &mut Self {
-        debug!("Adding service {}", std::any::type_name::<T>());
+        let handle = ServiceHandle::<T, D, E>::const_default();
+        debug!("Adding service {}", handle);
 
         // no dupes
         if self.world().get_resource::<Service<T, D, E>>().is_some() {
@@ -59,9 +61,7 @@ impl<T: ServiceLabel, D: ServiceData, E: ServiceError> ServiceExt<T, D, E>
         }
 
         // Register events
-        use crate::lifecycle::events::{
-            DisableService, EnableService, FailService, InitService,
-        };
+        use crate::lifecycle::events::{DisableService, EnableService, FailService, InitService};
 
         events!(
             self,
@@ -83,13 +83,23 @@ impl<T: ServiceLabel, D: ServiceData, E: ServiceError> ServiceExt<T, D, E>
         let world = self.world_mut();
         let is_startup = spec.is_startup;
 
-        // Add resource
-        world.insert_resource(Service::from_spec(spec));
+        // Check deps
+        let mut graph = world.get_resource_or_init::<DependencyGraph>();
+        register_service_dep(
+            &mut graph,
+            &handle.clone().into(),
+            spec.deps.iter().collect(),
+        )
+        .expect("Dependencies are invalid.");
+
+        // Insert service as resource
+        let service = Service::from_spec(spec);
+        world.insert_resource(service);
 
         // Initialize on startup
         if is_startup {
             world.schedule_scope(Startup, |_world, sched| {
-                debug!("{} will initialize at startup.", std::any::type_name::<T>());
+                debug!("{} will initialize at startup.", handle);
                 sched.add_systems(move |mut commands: Commands| {
                     commands.init_service(ServiceHandle::<T, D, E>::const_default());
                 });

@@ -65,6 +65,7 @@ macro_rules! service {
                 pub type [<$t Disabled>] = ServiceDisabled<[<$t Label>], $d, $e>;
                 pub type [<$t Initialized>] = ServiceInitialized<[<$t Label>], $d, $e>;
                 pub type [<$t Failed>] = ServiceFailed<[<$t Label>], $d, $e>;
+                pub type [<$t Updated>] = ServiceUpdated<[<$t Label>], $d, $e>;
             }
             pub use [< $t:lower _alias_impl >]::*;
         }

@@ -10,7 +10,7 @@ fn simple() {
     app.update();
     let world = app.world_mut();
     let s = world.resource_mut::<TestService>();
-    assert_eq!(s.state, ServiceState::Uninitialized)
+    assert!(matches!(s.state(), ServiceState::Uninitialized));
 }
 
 #[test]
@@ -24,8 +24,8 @@ fn hook_failure() {
     let world = app.world_mut();
     let service = world.resource_mut::<TestService>();
     assert_eq!(
-        service.state,
-        ServiceState::Failed(ServiceErrorKind::Own(TestErr::A))
+        service.state(),
+        &ServiceState::Failed(ServiceErrorKind::Own(TestErr::A))
     );
 }
 
@@ -40,7 +40,7 @@ fn manual_init() {
     app.update();
     let world = app.world_mut();
     let service = world.resource_mut::<TestService>();
-    assert_eq!(service.state, ServiceState::Enabled);
+    assert_eq!(service.state(), &ServiceState::Enabled);
 }
 
 #[derive(Resource, Debug, Default, PartialEq)]
@@ -49,6 +49,7 @@ pub struct TestHooks {
     enable: bool,
     disable: bool,
     fail: bool,
+    update: bool,
 }
 
 #[test]
@@ -67,6 +68,11 @@ fn hooks() {
             hooks_ran.enable = true;
             Ok(())
         })
+        .on_update(|_: In<()>, mut hooks_ran: ResMut<TestHooks>| {
+            debug!("update");
+            hooks_ran.update = true;
+            Ok(())
+        })
         .on_disable(|mut hooks_ran: ResMut<TestHooks>| {
             debug!("disable");
             hooks_ran.disable = true;
@@ -83,6 +89,10 @@ fn hooks() {
     app.update();
     app.world_mut()
         .commands()
+        .update_service(TestService::handle(), ());
+    app.update();
+    app.world_mut()
+        .commands()
         .disable_service(TestService::handle());
     app.update();
     assert_eq!(
@@ -92,6 +102,7 @@ fn hooks() {
             enable: true,
             disable: true,
             fail: true,
+            update: true,
         }
     );
 }
@@ -102,28 +113,39 @@ fn events() {
     app.init_resource::<TestHooks>();
     // NOTE: This fails with `is_startup(true)`. Probably because observers need
     // to be instantiated before events can fire.
-    app.add_service(TestService::default_spec()).add_observer(
-        |t: Trigger<TestServiceStateChange>, mut r: ResMut<TestHooks>, mut commands: Commands| {
-            match t.event().0.1 {
-                ServiceState::Initializing => {
-                    r.init = true;
+    app.add_service(TestService::default_spec())
+        .add_observer(
+            |t: Trigger<TestServiceStateChange>,
+             mut r: ResMut<TestHooks>,
+             mut commands: Commands| {
+                match t.event().0.1 {
+                    ServiceState::Initializing => {
+                        r.init = true;
+                    }
+                    ServiceState::Enabled => {
+                        r.enable = true;
+                        commands.update_service(TestService::handle(), ())
+                    }
+                    ServiceState::Disabled => {
+                        r.disable = true;
+                        commands
+                            .fail_service(TestService::handle(), ServiceErrorKind::Own(TestErr::A));
+                    }
+                    ServiceState::Failed(_) => r.fail = true,
+                    _ => {}
                 }
-                ServiceState::Enabled => {
-                    r.enable = true;
-                    commands.disable_service(TestService::handle());
-                }
-                ServiceState::Disabled => {
-                    r.disable = true;
-                    commands.fail_service(TestService::handle(), ServiceErrorKind::Own(TestErr::A));
-                }
-                ServiceState::Failed(_) => r.fail = true,
-                _ => {}
-            }
-        },
-    );
+            },
+        )
+        .add_observer(
+            |_: Trigger<TestServiceUpdated>, mut r: ResMut<TestHooks>, mut commands: Commands| {
+                r.update = true;
+                commands.disable_service(TestService::handle());
+            },
+        );
     app.world_mut()
         .commands()
         .init_service(TestService::handle());
+    app.update();
     app.update();
     assert_eq!(
         app.world_mut().resource::<TestHooks>(),
@@ -132,6 +154,7 @@ fn events() {
             enable: true,
             disable: true,
             fail: true,
+            update: true,
         }
     );
 }
@@ -250,7 +273,7 @@ fn uninitialized() {
             ServiceErrorKind::AlreadyInitialized(display_name.clone()),
         ]
     );
-    let state = &app.world().resource::<TestService>().state;
+    let state = &app.world().resource::<TestService>().state();
     assert!(matches!(state, ServiceState::Enabled));
 }
 

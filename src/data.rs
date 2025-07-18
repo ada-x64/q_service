@@ -14,28 +14,19 @@ use std::{
 /// #[derive(ServiceLabel, Clone, PartialEq, Eq, Debug, Hash)]
 /// pub struct MyService;
 /// ```
-pub trait ServiceLabel:
-    Send + Sync + Clone + PartialEq + Eq + Debug + Hash + 'static
-{
-}
+pub trait ServiceLabel: Send + Sync + Clone + PartialEq + Eq + Debug + Hash + 'static {}
 
 /// An arbitrary data type which can be used as extra state information for a
 /// service.
 ///
 /// If using feature derive, you can derive this.
-pub trait ServiceData:
-    Clone + Debug + PartialEq + Default + Send + Sync + 'static
-{
-}
+pub trait ServiceData: Clone + Debug + PartialEq + Default + Send + Sync + 'static {}
 impl ServiceData for () {}
 
 /// The error type for a service.
 ///
 /// If using feature derive, you can derive this.
-pub trait ServiceError:
-    Error + Clone + PartialEq + Send + Sync + 'static
-{
-}
+pub trait ServiceError: Error + Clone + PartialEq + Send + Sync + 'static {}
 
 /// A wrapper around the ServiceError trait. Used to specify where and how the
 /// service failed.
@@ -47,8 +38,10 @@ where
 {
     #[error("{0}")]
     Own(#[from] E),
-    #[error("Dependency {0} of {1} failed with error {2}")]
+    #[error("Dependency {0} of {1} failed with error:\n{2}")]
     Dependency(String, String, String),
+    #[error("Dependency of {0} failed to initialize with error:\n{1}.")]
+    DepInit(String, String),
     #[error("Service {0} is already initialized.")]
     AlreadyInitialized(String),
     #[error("Service {0} is uninitialized.")]
@@ -60,11 +53,7 @@ impl<E: ServiceError> ServiceError for ServiceErrorKind<E> {}
 /// directly available.
 /// Usually accessed through [Service::handle].
 #[derive(Debug, Default, Clone, Copy)]
-pub struct ServiceHandle<T, D, E>(
-    pub PhantomData<T>,
-    pub PhantomData<D>,
-    pub PhantomData<E>,
-)
+pub struct ServiceHandle<T, D, E>(pub PhantomData<T>, pub PhantomData<D>, pub PhantomData<E>)
 where
     T: ServiceLabel,
     D: ServiceData,

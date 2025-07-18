@@ -3,12 +3,12 @@ use bevy_ecs::prelude::*;
 use tracing::*;
 
 macro_rules! command_trait {
-    ($( ($name:ident $(, $data:ty )*)$(,)?)*) => {
+    ($( ($name:ident, $doc:expr $(, $data:ty )* $(,)?)$(,)?)*) => {
         /// Extends [Commands] with service-related functionality.
         pub trait ServiceLifecycleCommands {
             $crate::paste::paste! {
                 $(
-                    #[allow(missing_docs, reason="macro")]
+                    #[doc=$doc]
                     fn [<$name:snake:lower _service>]<T, D, E>(&mut self, handle: ServiceHandle<T, D, E> $(, data: $data)*)
                         where
                             T: ServiceLabel,
@@ -34,11 +34,29 @@ macro_rules! command_trait {
     };
 }
 command_trait!(
-    (Init),
-    (Enable),
-    (Disable),
-    (Fail, ServiceErrorKind<E>),
-    (Update, D)
+    (
+        Init,
+        "Directly initializes the service. See [module-level docs](crate::lifecycle) for more info.",
+    ),
+    (
+        Enable,
+        "Directly enables the service. See [module-level docs](crate::lifecycle) for more info.",
+    ),
+    (
+        Disable,
+        "Directly disables the service. See [module-level docs](crate::lifecycle) for more info.",
+    ),
+    (
+        Fail,
+        "Directly fails the service. This will shut the service down. See [module-level docs](crate::lifecycle) for more info.",
+        ServiceErrorKind<E>
+    ),
+    (
+        Update,
+        "Directly updates the service. This calls the update hook, potentially transforming the input data before storing it in the service.
+        See [module-level docs](crate::lifecycle) for more info.",
+        D
+    )
 );
 
 macro_rules! commands {

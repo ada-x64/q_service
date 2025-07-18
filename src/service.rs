@@ -1,23 +1,24 @@
 //! The main service module. Defines the Service resource.
 
-use crate::{deps::IsServiceDep, prelude::*};
-use bevy_ecs::prelude::*;
+use crate::{
+    deps::{DepInitErr, ServiceDep},
+    prelude::*,
+};
+use bevy_ecs::{component::Tick, prelude::*};
 use bevy_platform::prelude::*;
 use tracing::*;
 
 #[derive(Debug, Resource)]
 /// Resource which represents a service.
 pub struct Service<T: ServiceLabel, D: ServiceData, E: ServiceError> {
-    /// Arbitrary data store.
-    pub data: D,
-    /// Lifecycle hooks.
-    pub hooks: ServiceHooks<T, D, E>,
-    /// The current state of the service.
-    pub state: ServiceState<E>,
-    /// Has this service been initialized?
-    pub initialized: bool,
-    pub(crate) deps: Vec<Box<dyn IsServiceDep>>,
-    handle: ServiceHandle<T, D, E>,
+    pub(crate) data: D,
+    pub(crate) hooks: ServiceHooks<T, D, E>,
+    pub(crate) state: ServiceState<E>,
+    pub(crate) initialized: bool,
+    pub(crate) deps: Vec<ServiceDep>,
+    pub(crate) handle: ServiceHandle<T, D, E>,
+    pub(crate) initialized_at: Option<Tick>,
+    pub(crate) last_update: Option<Tick>,
 }
 
 impl<T, D, E> Service<T, D, E>
@@ -37,6 +38,18 @@ where
         ServiceHandle::const_default()
     }
 
+    /// Gets the service's current state.
+    /// In order to update this, use [commands](crate::lifecycle#commands) or [events](crate::lifecycle#events).
+    pub fn state(&self) -> &ServiceState<E> {
+        &self.state
+    }
+
+    /// Gets the service's data.
+    /// In order to update this, use [commands](crate::lifecycle#commands) or [events](crate::lifecycle#events).
+    pub fn data(&self) -> &D {
+        &self.data
+    }
+
     pub(crate) fn from_spec(spec: ServiceSpec<T, D, E>) -> Self {
         Self {
             data: spec.initial_data.unwrap_or_default(),
@@ -51,7 +64,16 @@ where
             handle: ServiceHandle::const_default(),
             deps: spec.deps,
             initialized: false,
+            initialized_at: None,
+            last_update: None,
         }
+    }
+
+    pub(crate) fn init_as_dep(world: &mut World) -> Result<(), DepInitErr> {
+        world.resource_scope(|world, mut this: Mut<Self>| {
+            this.on_init(world)
+                .map_err(|e| DepInitErr::Service(this.handle.to_string(), e.to_string()))
+        })
     }
 
     /// Initializes the service. Depending on the result of the hook, it will
@@ -67,15 +89,16 @@ where
         self.set_state(world, ServiceState::Initializing);
 
         // initialize dependencies
-        for dep in self.deps.iter_mut() {
-            let info = dep.info(world);
-            if !info.is_service || info.is_initialized {
-                continue;
-            }
+        let mut deps: Vec<_> = self
+            .deps
+            .iter_mut()
+            .filter(|d| d.is_service() && d.is_initialized())
+            .collect();
+        for dep in deps.iter_mut() {
             if let Err(e) = dep.initialize(world) {
                 let error = ServiceErrorKind::Dependency(
-                    ServiceHandle::from_service(self).to_string(),
-                    info.display_name,
+                    self.handle.to_string(),
+                    dep.display_name(),
                     e.to_string(),
                 );
                 self.on_failure(world, error.clone(), false);
@@ -89,6 +112,8 @@ where
         match res {
             Ok(val) => {
                 self.initialized = true;
+                self.initialized_at = Some(world.change_tick());
+                self.last_update = Some(world.change_tick());
                 if val {
                     let res = self.on_enable(world);
                     self.hooks.on_init.apply_deferred(world);
@@ -173,6 +198,7 @@ where
         match res {
             Ok(data) => {
                 self.data = data;
+                world.trigger(ServiceUpdated::new(Self::handle()));
                 Ok(())
             }
             Err(e) => {

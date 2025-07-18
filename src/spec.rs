@@ -1,34 +1,24 @@
-use crate::{deps::IsServiceDep, prelude::*};
+use crate::{deps::ServiceDep, prelude::*};
 use bevy_platform::prelude::*;
 
 /// Used to specify a new service.
 #[derive(Debug)]
 pub struct ServiceSpec<T: ServiceLabel, D: ServiceData, E: ServiceError> {
     pub(crate) _handle: ServiceHandle<T, D, E>,
-    /// The service's type-erased dependencies.
-    pub(crate) deps: Vec<Box<dyn IsServiceDep>>,
-    /// Does this service begin immediately?
-    /// Note that this will run as soon as the first commands are run.
-    /// This may be before Startup!
+    pub(crate) deps: Vec<ServiceDep>,
     pub(crate) is_startup: bool,
-    /// The data provided on startup.
     pub(crate) initial_data: Option<D>,
-    /// Lifecycle hook
     pub(crate) on_init: Option<InitFn<T, D, E>>,
-    /// Lifecycle hook
     pub(crate) on_enable: Option<EnableFn<T, D, E>>,
-    /// Lifecycle hook
     pub(crate) on_disable: Option<DisableFn<T, D, E>>,
-    /// Lifecycle hook
     pub(crate) on_update: Option<UpdateFn<T, D, E>>,
-    /// Lifecycle hook
     pub(crate) on_failure: Option<FailureFn<T, D, E>>,
 }
 macro_rules! on {
-    ($($name:ident),*) => {
+    ($(( $name:ident, $doc:expr )),*) => {
         $crate::paste::paste! {
             $(
-                /// Hook for this lifecycle stage.
+                #[doc=$doc]
                 pub fn [<on_ $name:snake:lower>]<M>(self, s: impl [<Into $name:camel Fn>]<T,D,E, M>) -> Self {
                     Self {
                         [< on_ $name:snake:lower >]: Some([<$name:camel Fn>]::new(s)),
@@ -62,7 +52,35 @@ where
 }
 impl<T: ServiceLabel, D: ServiceData, E: ServiceError> ServiceSpec<T, D, E> {
     // Hook setters.
-    on!(Init, Enable, Disable, Failure);
+    on!(
+        (
+            Init,
+            "Hook for the initialization stage.
+            Allows you to perform actions before the service is fully initialized.
+            The return value of this function determines whether the service is \
+            enabled or disabled once initializtion is complete."
+        ),
+        (
+            Enable,
+            "Hook for the enable stage.
+            Allows you to perform actions before the service is enabled."
+        ),
+        (
+            Disable,
+            "Hook for the disable stage.
+            Allows you to perform actions before the service is disabled."
+        ),
+        (
+            Failure,
+            "Hook for reacting to failures.
+            Allows you to perform actions before the service is set to Failed."
+        ),
+        (
+            Update,
+            "Hook for reacting to data updates.
+            Allows you to transform the data before it is stored in the service."
+        )
+    );
 
     /// Does this service begin on startup? By default, a service will be lazily
     /// initialized whenever its state is set to
@@ -95,18 +113,13 @@ impl<T: ServiceLabel, D: ServiceData, E: ServiceError> ServiceSpec<T, D, E> {
     ///         MyNonServiceDep,
     ///     ]));
     /// ```
-    pub fn with_deps(self, deps: Vec<impl IsServiceDep + 'static>) -> Self {
-        let deps = deps
-            .into_iter()
-            .map(|d| Box::new(d) as Box<dyn IsServiceDep>)
-            .collect();
+    pub fn with_deps(self, deps: Vec<ServiceDep>) -> Self {
         Self { deps, ..self }
     }
     /// Insert data to be available on initialization.
     /// This can be any data type. When this data type is altered, it will
-    /// trigger the [on_data_update] event. It can be updated with
-    /// [Commands::update_service_data] or the [UpdateServiceData] event.
-    /// (TODO!)
+    /// trigger the [ServiceHooks::on_update] event. It can be updated with
+    /// [Commands::update_service](crate::lifecycle::commands::ServiceLifecycleCommands::update_service) or the [UpdateService](crate::lifecycle::events::UpdateService) event.
     ///
     /// ## Example usage
     /// ```rust,skip

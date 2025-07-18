@@ -1,125 +1,155 @@
- # q_service
+# q_service
 
 [![License](https://img.shields.io/badge/license-MIT%2FApache-blue.svg)](https://github.com/bevyengine/bevy#license)
 [![Crates.io](https://img.shields.io/crates/v/q_service.svg)](https://crates.io/crates/q_service)
 [![Downloads](https://img.shields.io/crates/d/q_service.svg)](https://crates.io/crates/q_service)
 [![Docs](https://docs.rs/q_service/badge.svg)](https://docs.rs/q_service/latest/q_service/)
-[![CI](https://github.com/ada_x64/q_service/workflows/CI/badge.svg)](https://github.com/ada-x64/q_service/actions)
+[![CI](https://github.com/ada_x64/q_service/actions/workflows/ci/badge.svg)](https://github.com/ada-x64/q_service/actions)
 [![codecov](https://codecov.io/github/ada-x64/q_service/graph/badge.svg?token=2gqZobeujo)](https://codecov.io/github/ada-x64/q_service)
 [![enbyware](https://pride-badges.pony.workers.dev/static/v1?label=enbyware&labelColor=%23555&stripeWidth=8&stripeColors=FCF434%2CFFFFFF%2C9C59D1%2C2C2C2C "they/she")](https://en.pronouns.page/are/they&she)
 
- This crate aims to bring the service model to Bevy.
+This crate aims to bring the service model to Bevy.
 
- Bevy's ECS is like an operating system's process scheduler. It takes systems
- (processes) that operate on data (files) and schedules them appropriately.
- Well, if we have an OS analogue, we need an analogue for services.
+Bevy's ECS is like an operating system's process scheduler. It takes systems
+(processes) that operate on data (files) and schedules them appropriately.
+Well, if we have an OS analogue, we need an analogue for services.
 
- This crate is loosely modelled after [systemd](https://systemd.io).
- It doesn't manage PID1, but it does manage user services, including those
- necessary for startup.
+This crate is loosely modelled after [systemd](https://systemd.io).
+It doesn't manage PID1, but it does manage user services, including those
+necessary for startup.
 
- Services are resources which have built-in state, associated data, and
- managed dependencies. This crate extends the Bevy ECS to include this
- functionality. Because it is an engine extension, _there is no associated
- plugin._ Simply import the prelude and you're good to go.
+Services are resources which have built-in state, associated data, and
+managed dependencies. This crate extends the Bevy ECS to include this
+functionality. Because it is an engine extension, _there is no associated
+plugin._ Simply import the prelude and you're good to go.
 
- I have tried to make this documentation intuitive to explore in your IDE,
- assuming you're using rust-analyzer or a similar LSP. You might get more out
- of reading it as you use it rather than reading it all ahead of time.
+I have tried to make this documentation intuitive to explore in your IDE,
+assuming you're using rust-analyzer or a similar LSP. You might get more out
+of reading it as you use it rather than reading it all ahead of time.
 
- ## Example usage
- ```rust, skip
- use bevy::prelude::*;
- use q_service::prelude::*;
- use thiserror::Error;
+## Features
 
- // First, you need to define your service variables.
- // Services are uniquely determined by three types:
- // ServiceLabel, ServiceError, and ServiceData.
- // ServiceLabel will be defined for you when you declare
- // the service with `service!`, but you'll have to manually
- // define your data and error types.
+### Dependency management
 
- #[derive(ServiceError, Error, Debug, Clone, PartialEq)]
- enum MyError {}
+Dependency management in Bevy can be annoying, whether it's busy-waiting for asset loads or manually
+checking that dependent plugins and actions have been performed. This crate aims to fix that.
+Services allow you to declare your dependencies ahead of time so that they're ready to roll
+whenever you are.
 
- // If your service doesn't need any data, you can just pass in ().
- #[derive(ServiceData, Debug, Clone, PartialEq)]
- struct MyData {}
+Service dependencies don't have to be other services. They can be anything, as long as they implement [IntoServiceDep](crate::deps::IsServiceDep).
 
- // Declare the service!
- // This will create a bunch of useful aliases and the
- // ServiceLabel type.
- service!(MyService, MyData, MyError);
+__Note:__ Currently depedency management happens synchrnonously, so we're only halfway to meeting this crate's stated purpose. Once asynchronous initialization is finished, we'll be able to handle Assets.
 
- // Next, add the service to the application.
- fn doit() {
-     let mut app = App::new();
-     // We use a ServiceSpec to declaratively define the behavior of the service.
-     app.add_service(
-         MyService::default_spec()
-             // This service will initialize in the Startup schedule.
-             // By default, services are lazily initialized whenever they are
-             // enabled.
-             .is_startup(true)
-             // This service has some dependencies!
-             // Before it initializes, it will initialize all of its
-             // dependencies, and their dependencies. Dependencies
-             // are usually other services, but they can be anything which
-             // implements the `IsServiceDep` trait.
-             .with_deps(vec![
-                 // Service handles provide a convenient way to refer to
-                 // services without passing them around.
-                 // They're zero-sized types which act as a shorthand for the
-                 // service's type specification.
-                 MyOtherService::handle(),
-                 // This might be an asset, a resource, some random data...
-                 MyNonServiceDep,
-             ])
-             // Services can hold arbitrary data types. This doesn't affect their
-             // lifecycle or dependencies at all.
-             .with_data(MyData {
-                 /* ... */
-             })
-             // You can also define hooks for the service lifecycle.
-             // There are five main lifecycle events.
-             // The first is initialization.
-             .on_init(|world: &mut World| -> Result<bool, MyError> {
-                 // This can be any system function, exclusive or otherwise.
-                 // It just has to have the right return variable.
-                 // Initialization can proceed to enable or disable the
-                 // service, depending on the return value.
-                 Ok(true)
-             })
-             .on_enable(|service: ResMut<MyService>| -> Result<(), MyError> {
-                 // Enabling and disabling services just require an empty return
-                 // value.
-             })
-             .on_fail(
-                 |error: In<ServiceErrorKind<MyError>>,
-                  _some_sys_params: AssetServer| {
-                     // Failure takes in an error value. There are a few kinds.
-                     // This hook will fire if any error is encountered.
-                     // In some cases, you will receive a warning. This hook will
-                     // fire then, too.
-                 },
-             ),
-             // I'll leave the rest for you to discover.
-     );
+### Lifecycle events
 
-     // From here on out you make your app like normal, creating and reacting to
-     // service changes like any other event.
-     app.add_observer(|trigger: Trigger<MyServiceInitialized>| { /* ... */ });
- }
- ```
+In order to track dependencies you need to know if the service is currently initialized, whether it's failed, if it's enabled or disabled. In addition, services have data types associated with them so that you can update and react to these data changes. So, services provide you a way to generate reactive resources for your systems.
 
- ## Tips for library authors
+## Example usage
+```rust, skip
+use bevy::prelude::*;
+use q_service::prelude::*;
+use thiserror::Error;
 
- If you want to create a service crate, you can create an extension trait for your service type.
- ```rust, skip
- pub trait ExposeMySpec {
-     pub fn spec() -> MyServiceSpec;
- }
+// First, you need to define your service variables.
+// Services are uniquely determined by three types:
+// ServiceLabel, ServiceError, and ServiceData.
+// ServiceLabel will be defined for you when you declare
+// the service with `service!`, but you'll have to manually
+// define your data and error types.
+
+#[derive(ServiceError, Error, Debug, Clone, PartialEq)]
+enum MyError {}
+
+// If your service doesn't need any data, you can just pass in ().
+#[derive(ServiceData, Debug, Clone, PartialEq)]
+struct MyData {}
+
+// Declare the service!
+// This will create a bunch of useful aliases and the
+// ServiceLabel type.
+service!(MyService, MyData, MyError);
+
+// Next, add the service to the application.
+fn doit() {
+    let mut app = App::new();
+    // We use a ServiceSpec to declaratively define the behavior of the service.
+    app.add_service(
+        MyService::default_spec()
+            // This service will initialize in the Startup schedule.
+            // By default, services are lazily initialized whenever they are
+            // enabled.
+            .is_startup(true)
+            // This service has some dependencies!
+            // Before it initializes, it will initialize all of its
+            // dependencies, and their dependencies. Dependencies
+            // are usually other services, but they can be anything which
+            // implements the `IsServiceDep` trait.
+            .with_deps(vec![
+                // Service handles provide a convenient way to refer to
+                // services without passing them around.
+                // They're zero-sized types which act as a shorthand for the
+                // service's type specification.
+                MyOtherService::handle(),
+                // This might be an asset, a resource, some random data...
+                MyNonServiceDep,
+            ])
+            // Services can hold arbitrary data types. This can be modified by using
+            // lifecycle hooks or commands. You can listen for changes by using events.
+            .with_data(MyData {
+                /* ... */
+            })
+            // The service's behavior is largely defined by its lifecycle hooks.
+            // There are five main lifecycle events.
+            // The first is initialization.
+            .on_init(|world: &mut World| -> Result<bool, MyError> {
+                // This can be any system function, exclusive or otherwise.
+                // It just has to have the right return variable.
+                // Initialization can proceed to enable or disable the
+                // service, depending on the return value.
+                Ok(true)
+            })
+            // Next are enabling and disabling.
+            .on_enable(|service: ResMut<MyService>| -> Result<(), MyError> {
+                // Enabling and disabling services just require an empty return
+                // value.
+                Ok(())
+            })
+            // Then there's data transformation.
+            .on_update(|data: In<MyData>| -> Result<MyData, MyError> {
+                Ok(data)
+            })
+            // ... and finally, failure handling.
+            // In some cases, you will receive a warning. This hook will
+            // fire then, too. Warnings don't change the service's state.
+            .on_fail(
+                |error: In<ServiceErrorKind<MyError>>,
+                _some_sys_params: AssetServer| {
+                    // Failure takes in an error value. There are a few kinds.
+                },
+            ),
+    );
+
+    // From here on out you make your app like normal, creating and reacting to
+    // service changes like any other event.
+    app.add_observer(|trigger: Trigger<MyServiceInitialized>| { /* ... */ });
+}
+```
+
+## Tips for library authors
+
+If you want to create a service crate, you can create an extension trait for your service type.
+```rust, skip
+// my-lib.rs
+pub trait ExposeMySpec {
+    pub fn spec() -> MyServiceSpec;
+}
+
+// my-app.rs
+use q_service::prelude::*;
+use bevy::prelude::*;
+use my_lib::{ExposeMySpec, MyService};
+
+app.add_service(MyService::spec());
 ```
 
 ## Bevy tracking

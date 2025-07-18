@@ -1,99 +1,194 @@
 pub(crate) mod graph;
 
-use crate::{deps::graph::DependencyGraph, prelude::*};
+use crate::{
+    deps::graph::{DagError, DependencyGraph, NodeId, NodeInfo},
+    prelude::*,
+};
 use bevy_ecs::prelude::*;
-use std::any::TypeId;
 use tracing::*;
 
-#[allow(missing_docs)]
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-/// Meta information about the service.
-pub struct ServiceDepInfo {
-    /// TypeId is used as the key in the dependency graph.
-    pub type_id: TypeId,
-    /// The display name is used for friendly errors.
-    pub display_name: String,
-    /// Has this dependency been initialized?
-    pub is_initialized: bool,
-    /// Is this dependency a service? If you're implementing this, probably
-    /// not.
-    pub is_service: bool,
-    // The resource id for the dependency.
-    // pub resource_id: ComponentId,
+#[derive(Debug, PartialEq, Eq, Hash)]
+pub struct ServiceAsDep {
+    node_id: NodeId,
+    display_name: String,
+    is_initialized: bool,
+    initialize: fn(&mut World) -> Result<(), DepInitErr>,
 }
+impl<T, D, E> From<ServiceHandle<T, D, E>> for ServiceAsDep
+where
+    T: ServiceLabel,
+    D: ServiceData,
+    E: ServiceError,
+{
+    fn from(handle: ServiceHandle<T, D, E>) -> Self {
+        ServiceAsDep {
+            node_id: NodeId::service(handle.clone()),
+            display_name: handle.to_string(),
+            is_initialized: false,
+            initialize: Service::<T, D, E>::init_as_dep,
+        }
+    }
+}
+impl<T, D, E> From<ServiceHandle<T, D, E>> for ServiceDep
+where
+    T: ServiceLabel,
+    D: ServiceData,
+    E: ServiceError,
+{
+    fn from(value: ServiceHandle<T, D, E>) -> Self {
+        Self::Service(value.into())
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Hash)]
+pub enum ServiceDep {
+    Service(ServiceAsDep),
+    // Asset(AssetAsDep),
+    // Resource(ResourceAsDep),
+}
+impl ServiceDep {
+    pub fn display_name(&self) -> String {
+        match self {
+            ServiceDep::Service(service_as_dep) => service_as_dep.display_name.clone(),
+        }
+    }
+    pub fn node_id(&self) -> NodeId {
+        match self {
+            ServiceDep::Service(service_as_dep) => service_as_dep.node_id.clone(),
+        }
+    }
+    pub fn is_initialized(&self) -> bool {
+        match self {
+            ServiceDep::Service(service_as_dep) => service_as_dep.is_initialized.clone(),
+        }
+    }
+    pub fn is_service(&self) -> bool {
+        matches!(self, ServiceDep::Service(_))
+    }
+    pub fn initialize(&mut self, world: &mut World) -> Result<(), DepInitErr> {
+        match self {
+            ServiceDep::Service(service_as_dep) => service_as_dep.initialize.apply(world),
+        }
+    }
+    pub fn node_info(&self) -> NodeInfo {
+        NodeInfo {
+            display_name: self.display_name(),
+        }
+    }
+}
+
+// /// Marks an item as a service dependency. While this is usually for other
+// /// Services, it can be used for any arbitrary type.
+// pub trait ServiceDep: std::fmt::Debug + Send + Sync {
+//     // fn resource_id(&self) -> ComponentId;
+//     /// Return the unique ID of this service dependency.
+//     /// For a service, this will be the TypeId of its handle, cast to usize.
+//     fn id(&self) -> NodeId;
+//     /// The display name of this type, for debugging.
+//     fn display_name(&self) -> String;
+//     /// Is this a service? If you're implementing this, probably not.
+//     fn is_service(&self) -> bool;
+//     /// Gets any dependencies.
+//     // fn deps(&self) -> &Vec<&dyn ServiceDep>;
+//     /// Initialize the dependency and update the dependency graph.
+//     /// Note that services are taken out of the world during this operation.
+//     fn initialize(&mut self, world: &mut World) -> Result<(), DepInitErr>;
+//     /// Has this already been initialized?
+//     fn is_initialized(&self, world: &World) -> Result<bool, DepInitErr>;
+//     // Gives all the service info from this struct.
+//     // fn info(&self, world: &World) -> Result<ServiceDepInfo, DepInitErr>;
+// }
+
+// #[allow(missing_docs)]
+// #[derive(Clone, Debug, PartialEq, Eq, Hash)]
+// /// Meta information about the service.
+// pub struct ServiceDepInfo {
+//     /// The unique ID of this service dep. Must match [IntoServiceDep::id]
+//     pub node_id: NodeId,
+//     /// Information about dependencies. Must match [IntoServiceDep::dep_id]
+//     // pub dep_id: ServiceDepId,
+//     /// The display name is used for friendly errors.
+//     pub display_name: String,
+//     /// Has this dependency been initialized?
+//     pub is_initialized: bool,
+//     /// Is this dependency a service? If you're implementing this, probably
+//     /// not.
+//     pub is_service: bool,
+//     // The resource id for the dependency.
+//     // pub resource_id: ComponentId,
+// }
 
 #[allow(missing_docs)]
 /// Initialization error for dependencies.
-#[derive(thiserror::Error, Debug)]
+#[derive(thiserror::Error, Debug, Clone)]
 pub enum DepInitErr {
-    #[error("Service {0} failed to initialize with error {1}")]
+    #[error("Service '{0}' failed to initialize with error:\n{1}")]
     Service(String, String),
+    #[error("Dependency '{0}' not found.")]
+    NotFound(String),
+    #[error("Dependency '{0}' depends on itself.")]
+    DepLoop(String),
+    #[error("Service dependencies contain cycle(s).\n{0}")]
+    DepCycle(#[from] DagError),
 }
 
-/// Marks an item as a service dependency. While this is usually for other
-/// Services, it can be used for any arbitrary type.
-pub trait IsServiceDep: std::fmt::Debug + Send + Sync {
-    /// Although this takes an exclusive borrow, please do not mutate world
-    /// here. This is necessary for resource scoping.
-    fn info(&self, world: &mut World) -> ServiceDepInfo;
-    /// Initialize the dependency and update the dependency graph.
-    fn initialize(&mut self, world: &mut World) -> Result<(), DepInitErr>;
-}
-impl<T, D, E> IsServiceDep for Service<T, D, E>
-where
-    T: ServiceLabel,
-    D: ServiceData,
-    E: ServiceError,
-{
-    fn info(&self, _world: &mut World) -> ServiceDepInfo {
-        ServiceDepInfo {
-            type_id: TypeId::of::<Self>(),
-            display_name: ServiceHandle::from_service(self).to_string(),
-            is_initialized: self.initialized,
-            is_service: true,
-            // resource_id: world.resource_id::<Self>().unwrap(),
+// impl<T, D, E> ServiceDep for ServiceHandle<T, D, E>
+// where
+//     T: ServiceLabel,
+//     D: ServiceData,
+//     E: ServiceError,
+// {
+//     fn id(&self) -> NodeId {
+//         self.node_id()
+//     }
+//     fn display_name(&self) -> String {
+//         self.to_string()
+//     }
+//     fn is_service(&self) -> bool {
+//         true
+//     }
+//     fn is_initialized(&self, world: &World) -> Result<bool, DepInitErr> {
+//         match world.get_resource::<Service<T, D, E>>() {
+//             Some(service) => Ok(service.initialized),
+//             None => Err(DepInitErr::NotFound(self.to_string())),
+//         }
+//     }
+// }
+
+/// Adds a service to the dependency graph. Will fail if cycles are
+/// detected.
+pub(crate) fn register_service_dep(
+    graph: &mut DependencyGraph,
+    parent: &ServiceDep,
+    deps: Vec<&ServiceDep>,
+) -> Result<(), DepInitErr> {
+    graph.add_node_from_dep(parent);
+    for dep in deps {
+        info!(
+            "Adding dep: {} ({}) -> {} ({})",
+            parent.display_name(),
+            parent.node_id(),
+            dep.display_name(),
+            dep.node_id(),
+        );
+        graph.add_node_from_dep(dep);
+        graph.add_edge(parent.node_id(), dep.node_id());
+        // see if the graph makes sense...
+        match graph.topsort_graph() {
+            Ok(vec) => {
+                graph.topsort = vec;
+                // would like to iterate here but seems impossible to do
+                // register_service_dep(graph, dep.id())?;
+            }
+            Err(e) => {
+                let err = if matches!(e, DagError::DependencyLoop(_)) {
+                    DepInitErr::DepLoop(dep.display_name())
+                } else {
+                    e.into()
+                };
+                return Err(err);
+            }
         }
     }
-    fn initialize(&mut self, world: &mut World) -> Result<(), DepInitErr> {
-        let info = self.info(world);
-        debug!("Initializing dependency: {info:#?}");
-        let res = self.on_init(world).map_err(|e| {
-            DepInitErr::Service(info.display_name.clone(), e.to_string())
-        });
-
-        // Update graph
-        if world.get_resource::<DependencyGraph>().is_none() {
-            world.init_resource::<DependencyGraph>();
-        }
-        world.resource_scope(|world, mut graph: Mut<DependencyGraph>| {
-            graph.register_service(
-                ServiceHandle::<T, D, E>::const_default(),
-                self.deps.iter().map(|d| d.info(world)).collect(),
-            ).expect("Failed to add dependencies in service spec!\n.. Spec = {spec:#?}")
-        });
-
-        world
-            .resource_mut::<DependencyGraph>()
-            .services
-            .entry(info.type_id)
-            .insert(info);
-        res
-    }
-}
-impl<T, D, E> IsServiceDep for ServiceHandle<T, D, E>
-where
-    T: ServiceLabel,
-    D: ServiceData,
-    E: ServiceError,
-{
-    fn info(&self, world: &mut World) -> ServiceDepInfo {
-        world.resource_scope(|world, service: Mut<Service<T, D, E>>| {
-            service.info(world)
-        })
-    }
-    fn initialize(&mut self, world: &mut World) -> Result<(), DepInitErr> {
-        world.resource_scope(|world, mut service: Mut<Service<T, D, E>>| {
-            service.initialize(world)
-        })
-    }
+    Ok(())
 }
