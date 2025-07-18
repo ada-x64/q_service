@@ -2,7 +2,7 @@ pub(crate) mod tarjan;
 
 use std::sync::Mutex;
 
-use bevy_ecs::{component::ComponentId, resource::Resource};
+use bevy_ecs::resource::Resource;
 use bevy_platform::{
     collections::{HashMap, HashSet},
     hash::FixedHasher,
@@ -217,7 +217,7 @@ impl DependencyGraph {
 
     /// Return `true` if the edge connecting `a` with `b` is contained in the
     /// graph.
-    pub fn contains_edge(&self, a: NodeId, b: NodeId) -> bool {
+    pub fn _contains_edge(&self, a: NodeId, b: NodeId) -> bool {
         self.edges.contains(&Self::edge_key(a, b))
     }
 

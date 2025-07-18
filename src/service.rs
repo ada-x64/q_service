@@ -92,7 +92,7 @@ where
         let mut deps: Vec<_> = self
             .deps
             .iter_mut()
-            .filter(|d| d.is_service() && d.is_initialized())
+            .filter(|d| !d.is_initialized())
             .collect();
         for dep in deps.iter_mut() {
             if let Err(e) = dep.initialize(world) {

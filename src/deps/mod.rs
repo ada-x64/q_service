@@ -77,49 +77,8 @@ impl ServiceDep {
     }
 }
 
-// /// Marks an item as a service dependency. While this is usually for other
-// /// Services, it can be used for any arbitrary type.
-// pub trait ServiceDep: std::fmt::Debug + Send + Sync {
-//     // fn resource_id(&self) -> ComponentId;
-//     /// Return the unique ID of this service dependency.
-//     /// For a service, this will be the TypeId of its handle, cast to usize.
-//     fn id(&self) -> NodeId;
-//     /// The display name of this type, for debugging.
-//     fn display_name(&self) -> String;
-//     /// Is this a service? If you're implementing this, probably not.
-//     fn is_service(&self) -> bool;
-//     /// Gets any dependencies.
-//     // fn deps(&self) -> &Vec<&dyn ServiceDep>;
-//     /// Initialize the dependency and update the dependency graph.
-//     /// Note that services are taken out of the world during this operation.
-//     fn initialize(&mut self, world: &mut World) -> Result<(), DepInitErr>;
-//     /// Has this already been initialized?
-//     fn is_initialized(&self, world: &World) -> Result<bool, DepInitErr>;
-//     // Gives all the service info from this struct.
-//     // fn info(&self, world: &World) -> Result<ServiceDepInfo, DepInitErr>;
-// }
-
-// #[allow(missing_docs)]
-// #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-// /// Meta information about the service.
-// pub struct ServiceDepInfo {
-//     /// The unique ID of this service dep. Must match [IntoServiceDep::id]
-//     pub node_id: NodeId,
-//     /// Information about dependencies. Must match [IntoServiceDep::dep_id]
-//     // pub dep_id: ServiceDepId,
-//     /// The display name is used for friendly errors.
-//     pub display_name: String,
-//     /// Has this dependency been initialized?
-//     pub is_initialized: bool,
-//     /// Is this dependency a service? If you're implementing this, probably
-//     /// not.
-//     pub is_service: bool,
-//     // The resource id for the dependency.
-//     // pub resource_id: ComponentId,
-// }
-
-#[allow(missing_docs)]
 /// Initialization error for dependencies.
+#[allow(missing_docs)]
 #[derive(thiserror::Error, Debug, Clone)]
 pub enum DepInitErr {
     #[error("Service '{0}' failed to initialize with error:\n{1}")]
@@ -131,29 +90,6 @@ pub enum DepInitErr {
     #[error("Service dependencies contain cycle(s).\n{0}")]
     DepCycle(#[from] DagError),
 }
-
-// impl<T, D, E> ServiceDep for ServiceHandle<T, D, E>
-// where
-//     T: ServiceLabel,
-//     D: ServiceData,
-//     E: ServiceError,
-// {
-//     fn id(&self) -> NodeId {
-//         self.node_id()
-//     }
-//     fn display_name(&self) -> String {
-//         self.to_string()
-//     }
-//     fn is_service(&self) -> bool {
-//         true
-//     }
-//     fn is_initialized(&self, world: &World) -> Result<bool, DepInitErr> {
-//         match world.get_resource::<Service<T, D, E>>() {
-//             Some(service) => Ok(service.initialized),
-//             None => Err(DepInitErr::NotFound(self.to_string())),
-//         }
-//     }
-// }
 
 /// Adds a service to the dependency graph. Will fail if cycles are
 /// detected.
