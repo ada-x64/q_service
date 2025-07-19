@@ -37,9 +37,19 @@ pub trait ServiceExt<T: ServiceLabel, D: ServiceData, E: ServiceError> {
     /// the [service!] macro from this crate.
     ///
     /// ## Example usage
-    /// ```rust, skip
-    /// service!(Example, (), ExampleErr);
-    /// app.add_service(ExampleService::spec());
+    /// ```rust
+    /// use q_service::prelude::*;
+    /// use bevy::prelude::*;
+    ///
+    /// #[derive(ServiceError, thiserror::Error, Debug, PartialEq, Eq, Hash, Clone)]
+    /// pub enum ExampleErr {}
+    ///
+    /// service!(ExampleService, (), ExampleErr);
+    ///
+    /// fn main() {
+    ///     let mut app = App::new();
+    ///     app.add_service(ExampleService::default_spec());
+    /// }
     /// ```
     /// ## Panics
     /// This function panics if cycles are detected in the ServiceSpec's

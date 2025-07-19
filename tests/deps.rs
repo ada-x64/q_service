@@ -1,7 +1,7 @@
 mod common;
 use bevy::prelude::*;
 use common::*;
-use q_service::{deps::DepInitErr, prelude::*};
+use q_service::prelude::*;
 
 #[test]
 fn deps_fail_on_cycle() {

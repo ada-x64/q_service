@@ -1,4 +1,5 @@
 /// Creates aliases for the commonly used service types.
+///
 /// ## Parameters:
 /// Example: The service's name. This is expected to be a plain type label
 /// passed in. The macro will create the necessary structs for you.
@@ -10,23 +11,25 @@
 /// [ServiceError](crate::prelude::ServiceError).
 ///
 /// ## Example usage
-/// ```rust, ignore
-/// use q_service::prelude::*;
-/// use bevy::prelude::*;
+/// ```rust
+/// # use q_service::prelude::*;
+/// # use bevy::prelude::*;
+/// #
+/// # #[derive(ServiceData, Clone, Default, PartialEq, Debug)]
+/// # struct MyData;
+/// # #[derive(ServiceError, thiserror::Error, PartialEq, Debug, Clone)]
+/// # enum MyError {}
+/// #
+/// service!(ExampleService, MyData, MyError);
 ///
-/// #[derive(ServiceData, Clone, Default, PartialEq, Debug)]
-/// struct MyData;
-/// #[derive(ServiceError, thiserror::Error, PartialEq, Debug, Clone)]
-/// enum MyError {}
-///
-/// service!(Example, MyData, MyError);
-///
-/// let app = App::new();
-/// app.add_service(ExampleService::spec());
+/// pub fn main() {
+///     let mut app = App::new();
+///     app.add_service(ExampleService::default_spec());
+/// }
 /// ```
 ///
 /// ## Example output
-/// ```rust, skip
+/// ```rust, ignore
 /// /// Label for the state. Works as part of a unique identifier.
 /// #[derive(ServiceLabel, PartialEq, Eq, Debug, Copy, Clone, Hash)]
 /// pub struct ExampleLabel;

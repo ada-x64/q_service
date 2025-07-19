@@ -36,7 +36,7 @@ checking that dependent plugins and actions have been performed. This crate aims
 Services allow you to declare your dependencies ahead of time so that they're ready to roll
 whenever you are.
 
-Service dependencies don't have to be other services. They can be anything, as long as they implement [IntoServiceDep](crate::deps::IsServiceDep).
+Dependencies can be assets, resource, or other services.
 
 __Note:__ Currently depedency management happens synchrnonously, so we're only halfway to meeting this crate's stated purpose. Once asynchronous initialization is finished, we'll be able to handle Assets.
 
@@ -45,7 +45,7 @@ __Note:__ Currently depedency management happens synchrnonously, so we're only h
 In order to track dependencies you need to know if the service is currently initialized, whether it's failed, if it's enabled or disabled. In addition, services have data types associated with them so that you can update and react to these data changes. So, services provide you a way to generate reactive resources for your systems.
 
 ## Example usage
-```rust, skip
+```rust
 use bevy::prelude::*;
 use q_service::prelude::*;
 use thiserror::Error;
@@ -58,22 +58,26 @@ use thiserror::Error;
 // define your data and error types.
 
 #[derive(ServiceError, Error, Debug, Clone, PartialEq)]
-enum MyError {}
+pub enum MyError {}
 
 // If your service doesn't need any data, you can just pass in ().
-#[derive(ServiceData, Debug, Clone, PartialEq)]
-struct MyData {}
+#[derive(ServiceData, Debug, Clone, PartialEq, Default)]
+pub struct MyData {}
 
 // Declare the service!
 // This will create a bunch of useful aliases and the
 // ServiceLabel type.
 service!(MyService, MyData, MyError);
+// Services can share data and error types so long as their names are distinct.
+service!(MyOtherService, MyData, MyError);
 
 // Next, add the service to the application.
-fn doit() {
+fn main() {
     let mut app = App::new();
     // We use a ServiceSpec to declaratively define the behavior of the service.
-    app.add_service(
+    app
+#       .add_plugins(DefaultPlugins)
+        .add_service(
         MyService::default_spec()
             // This service will initialize in the Startup schedule.
             // By default, services are lazily initialized whenever they are
@@ -81,17 +85,13 @@ fn doit() {
             .is_startup(true)
             // This service has some dependencies!
             // Before it initializes, it will initialize all of its
-            // dependencies, and their dependencies. Dependencies
-            // are usually other services, but they can be anything which
-            // implements the `IsServiceDep` trait.
+            // dependencies, and their dependencies.
             .with_deps(vec![
                 // Service handles provide a convenient way to refer to
                 // services without passing them around.
                 // They're zero-sized types which act as a shorthand for the
                 // service's type specification.
-                MyOtherService::handle(),
-                // This might be an asset, a resource, some random data...
-                MyNonServiceDep,
+                MyOtherService::handle().into(),
             ])
             // Services can hold arbitrary data types. This can be modified by using
             // lifecycle hooks or commands. You can listen for changes by using events.
@@ -116,15 +116,14 @@ fn doit() {
             })
             // Then there's data transformation.
             .on_update(|data: In<MyData>| -> Result<MyData, MyError> {
-                Ok(data)
+                Ok(data.clone())
             })
             // ... and finally, failure handling.
             // In some cases, you will receive a warning. This hook will
             // fire then, too. Warnings don't change the service's state.
-            .on_fail(
-                |error: In<ServiceErrorKind<MyError>>,
-                _some_sys_params: AssetServer| {
-                    // Failure takes in an error value. There are a few kinds.
+            .on_failure(
+                |error: In<ServiceErrorKind<MyError>>| {
+                    // ...
                 },
             ),
     );
@@ -138,18 +137,46 @@ fn doit() {
 ## Tips for library authors
 
 If you want to create a service crate, you can create an extension trait for your service type.
-```rust, skip
-// my-lib.rs
+```rust
+# use q_service::prelude::*;
+# use bevy::prelude::*;
+# #[derive(ServiceError, thiserror::Error, Debug, Clone, PartialEq)]
+# pub enum MyError {}
+# service!(MyService, (), MyError);
+// lib.rs
 pub trait ExposeMySpec {
-    pub fn spec() -> MyServiceSpec;
+    fn spec() -> MyServiceSpec;
+}
+impl ExposeMySpec for MyService {
+    fn spec() -> MyServiceSpec {
+        MyService::default_spec()
+            //...
+    }
 }
 
-// my-app.rs
-use q_service::prelude::*;
-use bevy::prelude::*;
-use my_lib::{ExposeMySpec, MyService};
+// main.rs
+pub fn main() {
+    App::new().add_service(MyService::spec());
+}
+```
 
-app.add_service(MyService::spec());
+... or just export a plugin:
+```rust
+# use q_service::prelude::*;
+# use bevy::prelude::*;
+# #[derive(ServiceError, thiserror::Error, Debug, Clone, PartialEq)]
+# pub enum MyError {}
+# service!(MyService, (), MyError);
+# pub struct MyPlugin;
+impl Plugin for MyPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_service(
+            MyService::default_spec()
+            // ...
+        );
+    }
+}
+# pub fn main() {}
 ```
 
 ## Bevy tracking

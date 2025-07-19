@@ -9,16 +9,24 @@ When initializing a service, you can add [hooks](./hooks) to each lifecycle
 phase. For example:
 
 ```rust
-use bevy::prelude::*;
-use q_service::prelude::*;
-
-service!(Example, (), ExampleError)
-
-let app = App::new();
-app.add_service(
-    EXAMPLE_SERVICE_SPEC
-        .on_init(|| info!("This can be any system."));
-)
+# use bevy::prelude::*;
+# use q_service::prelude::*;
+#
+# #[derive(ServiceError, thiserror::Error, Debug, PartialEq, Clone)]
+# pub enum ExampleError {}
+#
+# service!(ExampleService, (), ExampleError);
+#
+# fn main() {
+#     let mut app = App::new();
+    app.add_service(
+        ExampleService::default_spec()
+            // This can be any system, as long as the return type is correct.
+            .on_init(|| {
+                Ok(true)
+            })
+    );
+# }
 ```
 
 Hooks can take in any Bevy function system. Each hook has its own required signature.
@@ -36,8 +44,21 @@ Hooks can take in any Bevy function system. Each hook has its own required signa
 
 Commands can be used to call service lifecycle events directly. If you need something to execute _now_, this is useful. Note that this uses [World::resource_scope](bevy_ecs::prelude::World::resource_scope) internally, so the service is temporarily taken out of the World while the command executes.
 
-```rust, skip
-commands.update_service(MyService::handle(), my_data);
+```rust
+# use q_service::prelude::*;
+# use bevy::prelude::*;
+#
+# #[derive(ServiceError, thiserror::Error, PartialEq, Debug, Clone)]
+# pub enum MyError {}
+# #[derive(ServiceData, PartialEq, Default, Debug, Clone)]
+# pub struct MyData;
+# service!(MyService, MyData, MyError);
+# pub fn main() {
+# let mut app = App::new();
+# let mut world = app.world_mut();
+# let mut commands = world.commands();
+commands.update_service(MyService::handle(), MyData);
+# }
 ```
 
 
@@ -47,14 +68,33 @@ You can react to service state changes using events.
 Events fire _after_ the service has already updated.
 If you want to modify the behavior of your service, you'll need to use hooks.
 
-```rust, skip
-app.add_observer(|trigger: Trigger<ExampleServiceEnabled>| {/*...*/})
+```rust
+# use q_service::prelude::*;
+# use bevy::prelude::*;
+#
+# #[derive(ServiceError, thiserror::Error, PartialEq, Debug, Clone)]
+# pub enum MyError {}
+# service!(MyService, (), MyError);
+# pub fn main() {
+# let mut app = App::new();
+app.add_observer(|trigger: Trigger<MyServiceEnabled>| {/*...*/});
+# }
 ```
 
 ## Run Conditions
 
 This crate defines a few run conditions for services, in case you want to do something like the below:
 
-```rust, skip
-app.add_systems(Update, (my_systems).run_if(service_enabled(ExampleService::handle())));
+```rust
+# use q_service::prelude::*;
+# use bevy::prelude::*;
+#
+# #[derive(ServiceError, thiserror::Error, PartialEq, Debug, Clone)]
+# pub enum MyError {}
+# service!(MyService, (), MyError);
+# pub fn my_systems() {}
+# pub fn main() {
+# let mut app = App::new();
+app.add_systems(Update, (my_systems).run_if(service_enabled(MyService::handle())));
+# }
 ```

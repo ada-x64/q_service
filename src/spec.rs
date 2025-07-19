@@ -91,8 +91,8 @@ impl<T: ServiceLabel, D: ServiceData, E: ServiceError> ServiceSpec<T, D, E> {
     pub fn is_startup(self, is_startup: bool) -> Self {
         Self { is_startup, ..self }
     }
-    /// Add dependencies. Dependencies are anything which implement
-    /// [IsServiceDep].
+    /// Add dependencies. A dependency can be an [Asset](bevy_asset::Asset),
+    /// [Resource](bevy_ecs::resource::Resource), or another [Service].
     ///
     /// When this service initializes, it will recursively initialize all of its
     /// dependencies. If any of the dependencies fail, this service will fail to
@@ -104,14 +104,25 @@ impl<T: ServiceLabel, D: ServiceData, E: ServiceError> ServiceSpec<T, D, E> {
     /// panic on add.
     ///
     /// ## Example usage
-    /// ```rust, skip
-    /// app.add_service(
-    ///     ExampleService::spec()
-    ///     .with_deps(vec![
-    ///         MyDep::spec(),
-    ///         MyOtherDep::spec(),
-    ///         MyNonServiceDep,
-    ///     ]));
+    /// ```rust
+    /// # use q_service::prelude::*;
+    /// # use bevy_app::App;
+    /// #
+    /// # #[derive(ServiceError, thiserror::Error, Debug, PartialEq, Clone)]
+    /// # pub enum MyError {}
+    /// #
+    /// service!(MyService, (), MyError);
+    /// service!(MyDep, (), MyError);
+    ///
+    /// pub fn main() {
+    ///     let mut app = App::new();
+    ///     app.add_service(
+    ///         MyService::default_spec()
+    ///         .with_deps(vec![
+    ///             MyDep::handle().into(),
+    ///         ])
+    ///     );
+    /// }
     /// ```
     pub fn with_deps(self, deps: Vec<ServiceDep>) -> Self {
         Self { deps, ..self }
@@ -122,13 +133,26 @@ impl<T: ServiceLabel, D: ServiceData, E: ServiceError> ServiceSpec<T, D, E> {
     /// [Commands::update_service](crate::lifecycle::commands::ServiceLifecycleCommands::update_service) or the [UpdateService](crate::lifecycle::events::UpdateService) event.
     ///
     /// ## Example usage
-    /// ```rust,skip
-    /// app.add_service(
-    ///     ExampleService::spec()
-    ///         .with_data(MyData {
-    ///             /*...*/
-    ///         })
-    /// );
+    /// ```rust
+    /// # use q_service::prelude::*;
+    /// # use bevy_app::App;
+    /// #
+    /// # #[derive(ServiceError, thiserror::Error, Debug, Clone, PartialEq, Eq, Hash)]
+    /// # pub enum MyError {}
+    /// # #[derive(ServiceData, Debug, Default, Clone, PartialEq)]
+    /// # pub struct MyData {}
+    /// #
+    /// service!(MyService, MyData, MyError);
+    /// // ...
+    /// # fn main() {
+    ///     let mut app = App::new();
+    ///     app.add_service(
+    ///         MyService::default_spec()
+    ///             .with_data(MyData {
+    ///                 /*...*/
+    ///             })
+    ///         );
+    /// # }
     /// ```
     pub fn with_data(self, data: D) -> Self {
         Self {

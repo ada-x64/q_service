@@ -7,6 +7,7 @@ use crate::{
 use bevy_ecs::prelude::*;
 use tracing::*;
 
+/// A Service represented as a dependency of another service.
 #[derive(Debug, PartialEq, Eq, Hash)]
 pub struct ServiceAsDep {
     node_id: NodeId,
@@ -40,6 +41,8 @@ where
     }
 }
 
+/// A service dependency.
+#[allow(missing_docs)]
 #[derive(Debug, PartialEq, Eq, Hash)]
 pub enum ServiceDep {
     Service(ServiceAsDep),
@@ -47,29 +50,31 @@ pub enum ServiceDep {
     // Resource(ResourceAsDep),
 }
 impl ServiceDep {
+    /// A friendly name for the dependency, e.g. the name of the service.
     pub fn display_name(&self) -> String {
         match self {
             ServiceDep::Service(service_as_dep) => service_as_dep.display_name.clone(),
         }
     }
+    /// The dependency's NodeId. This is obtained from a global store.
     pub fn node_id(&self) -> NodeId {
         match self {
-            ServiceDep::Service(service_as_dep) => service_as_dep.node_id.clone(),
+            ServiceDep::Service(service_as_dep) => service_as_dep.node_id,
         }
     }
+    /// Is this dependency initialized?
     pub fn is_initialized(&self) -> bool {
         match self {
-            ServiceDep::Service(service_as_dep) => service_as_dep.is_initialized.clone(),
+            ServiceDep::Service(service_as_dep) => service_as_dep.is_initialized,
         }
     }
-    pub fn is_service(&self) -> bool {
-        matches!(self, ServiceDep::Service(_))
-    }
+    /// The initialization function for this dependency.
     pub fn initialize(&mut self, world: &mut World) -> Result<(), DepInitErr> {
         match self {
             ServiceDep::Service(service_as_dep) => service_as_dep.initialize.apply(world),
         }
     }
+    /// Information about the dependency as stored in the dependency graph.
     pub fn node_info(&self) -> NodeInfo {
         NodeInfo {
             display_name: self.display_name(),

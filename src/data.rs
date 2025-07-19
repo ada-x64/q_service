@@ -10,10 +10,8 @@ use std::{
 /// A type which can be used as the unique identifer of a service.
 /// Note that this _must be unique,_ otherwise instantiating a service with this
 /// label will override any previous such services.
-/// ```rust
-/// #[derive(ServiceLabel, Clone, PartialEq, Eq, Debug, Hash)]
-/// pub struct MyService;
-/// ```
+///
+/// __You probably want to use the `service!` macro instead of deriving this yourself.__
 pub trait ServiceLabel: Send + Sync + Clone + PartialEq + Eq + Debug + Hash + 'static {}
 
 /// An arbitrary data type which can be used as extra state information for a

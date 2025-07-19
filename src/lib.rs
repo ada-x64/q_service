@@ -1,4 +1,5 @@
 #![warn(missing_docs)]
+#![allow(clippy::needless_doctest_main, reason = "it is needed, actually")]
 #![doc = include_str!("../README.md")]
 
 /// Extends the Bevy [App](bevy_app::prelude::App) with service-related

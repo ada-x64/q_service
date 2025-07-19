@@ -39,13 +39,15 @@ where
     }
 
     /// Gets the service's current state.
-    /// In order to update this, use [commands](crate::lifecycle#commands) or [events](crate::lifecycle#events).
+    /// In order to update this, use [commands](crate::lifecycle#commands)
+    /// or [events](crate::lifecycle#events).
     pub fn state(&self) -> &ServiceState<E> {
         &self.state
     }
 
     /// Gets the service's data.
-    /// In order to update this, use [commands](crate::lifecycle#commands) or [events](crate::lifecycle#events).
+    /// In order to update this, use [commands](crate::lifecycle#commands)
+    /// or [events](crate::lifecycle#events).
     pub fn data(&self) -> &D {
         &self.data
     }
