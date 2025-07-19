@@ -19,7 +19,7 @@ bevy_app = "0.16.1"
 bevy_derive = "0.16.1"
 
 # local
-q_service_macros = { path = "./macros/", optional = true }
+q_service_macros = { path = "./macros/", version = "0.1", optional = true }
 
 # other
 derivative = "2.2.0"
