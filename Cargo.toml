@@ -1,25 +1,22 @@
 [package]
 name = "q_service"
 description = "Services for Bevy"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["<phoenix.mandala@pm.me>"]
 edition = "2024"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/ada-x64/q_service"
 
-[features]
-derive = ["dep:q_service_macros"]
-
 [dependencies]
 # keep these up-to-date
-tracing = { version = "0.1", default-features = false }
+tracing = { version = "0.1", default-features = false, features = [
+    "attributes",
+] }
 bevy_ecs = "0.16.1"
 bevy_platform = "0.16.1"
 bevy_app = "0.16.1"
 bevy_derive = "0.16.1"
-
-# local
-q_service_macros = { path = "./macros/", version = "0.1", optional = true }
+bevy_tasks = "0.16.1"
 
 # other
 derivative = "2.2.0"
@@ -29,6 +26,7 @@ slotmap = "1.0.7"
 smallvec = "1.15.1"
 thiserror = "2.0.12"
 bevy_asset = "0.16.1"
+bevy_state = "0.16"
 
 [dev-dependencies]
 bevy = "0.16.1"

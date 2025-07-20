@@ -1,8 +1,9 @@
 pub(crate) mod tarjan;
 
-use std::sync::Mutex;
+use std::fmt::Debug;
 
-use bevy_ecs::resource::Resource;
+use bevy_asset::UntypedAssetId;
+use bevy_ecs::{component::ComponentId, resource::Resource};
 use bevy_platform::{
     collections::{HashMap, HashSet},
     hash::FixedHasher,
@@ -11,58 +12,41 @@ use indexmap::IndexMap;
 use smallvec::SmallVec;
 use thiserror::Error;
 
-use crate::{
-    data::{ServiceData, ServiceError, ServiceHandle, ServiceLabel},
-    deps::ServiceDep,
-};
-
-static SERVICE_IDX: Mutex<usize> = Mutex::new(0);
-static SERVICE_MAP: Mutex<HashMap<String, usize>> = Mutex::new(HashMap::new());
-// static ASSET_IDX: Mutex<usize> = Mutex::new(0);
-// static RESOURCE_IDX: Mutex<usize> = Mutex::new(0);
-#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
+/// The ID of a service dependency, as stored in the [DependencyGraph].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum NodeId {
-    Service(usize),
-    Asset(usize),
-    Resource(usize),
-}
-impl std::fmt::Display for NodeId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            NodeId::Service(idx) => f.write_fmt(format_args!("Service({idx})")),
-            NodeId::Asset(idx) => f.write_fmt(format_args!("Asset({idx})")),
-            NodeId::Resource(idx) => f.write_fmt(format_args!("Resource({idx})")),
-        }
-    }
+    /// NodeId for a Service. Services are Resources, so this is just a ComponentId.
+    Service(ComponentId),
+    /// NodeId for a Resource. Resources are stored globally as components, so this is just a ComponentId.
+    Resource(ComponentId),
+    /// NodeId for an Asset. Just an UntypedAssetId.
+    Asset(UntypedAssetId),
 }
 impl NodeId {
-    pub fn service<T, D, E>(handle: ServiceHandle<T, D, E>) -> Self
-    where
-        T: ServiceLabel,
-        D: ServiceData,
-        E: ServiceError,
-    {
-        let mut map = SERVICE_MAP.lock().unwrap();
-        match map.get(&handle.to_string()) {
-            Some(val) => Self::Service(*val),
-            None => {
-                let mut idx = SERVICE_IDX.lock().unwrap();
-                *idx += 1;
-                map.insert(handle.to_string(), *idx);
-                Self::Service(*idx)
-            }
+    /// Gets the underlying id for a service.
+    pub fn service_id(self) -> Option<ComponentId> {
+        if let NodeId::Service(id) = self {
+            Some(id)
+        } else {
+            None
         }
     }
-    pub fn asset() -> Self {
-        todo!()
+    /// Gets the underlying id for a resource.
+    pub fn resource_id(self) -> Option<ComponentId> {
+        if let NodeId::Resource(id) = self {
+            Some(id)
+        } else {
+            None
+        }
     }
-    pub fn resource() -> Self {
-        todo!()
+    /// Gets the underlying id for an asset.
+    pub fn asset_id(self) -> Option<UntypedAssetId> {
+        if let NodeId::Asset(id) = self {
+            Some(id)
+        } else {
+            None
+        }
     }
-}
-#[derive(Clone, Debug, PartialEq)]
-pub struct NodeInfo {
-    pub display_name: String,
 }
 
 /// Compact storage of a [`NodeId`] and a [`Direction`].
@@ -94,14 +78,9 @@ impl Direction {
     }
 }
 /// A directed acyclic graph structure used to track service dependencies.
-/// Based on [bevy_ecs::Graph]
+/// Based on [bevy_ecs::schedule::graph]
 #[derive(Default, Debug, Resource)]
 pub struct DependencyGraph {
-    /// This is the storage variable.
-    /// Could store the services themselves here, but they're not
-    /// type-erasable, so they're stored as resources instead.
-    /// Could look into how that works and just store them here anyways.
-    pub node_info: HashMap<NodeId, NodeInfo>,
     nodes: IndexMap<NodeId, Vec<NodeIdAndDir>, FixedHasher>,
     edges: HashSet<NodeIdPair, FixedHasher>,
     /// A cached topological ordering of the graph.
@@ -114,14 +93,7 @@ impl DependencyGraph {
         self.nodes.len()
     }
 
-    pub fn add_node_from_dep(&mut self, dep: &ServiceDep) {
-        self.nodes.entry(dep.node_id()).or_default();
-        self.node_info
-            .entry(dep.node_id())
-            .or_insert(dep.node_info());
-    }
-
-    /// Add node `n` to the graph.
+    /// Add node `n` to the graph if it doesn't already exist.
     pub fn add_node(&mut self, n: NodeId) {
         self.nodes.entry(n).or_default();
     }
@@ -357,24 +329,19 @@ impl DependencyGraph {
         }
     }
 
-    // TODO: Make this better!
-    /// Logs details of cycles in the dependency graph.
     fn get_dependency_cycles_error_message(&self, cycles: &[Vec<NodeId>]) -> String {
         use std::fmt::Write;
         let mut message = format!("Service has {} before/after cycle(s):\n", cycles.len());
         for (i, cycle) in cycles.iter().enumerate() {
-            let mut names = cycle.iter().map(|node_id| {
-                tracing::info!("{:#?}", &self);
-                &self.node_info.get(node_id).unwrap().display_name
-            });
+            let mut names = cycle.iter();
             let first_name = names.next().unwrap();
             writeln!(
                 message,
-                "cycle {}: `{first_name}` must run before itself",
+                "cycle {}: `{first_name:?}` must run before itself",
                 i + 1,
             )
             .unwrap();
-            writeln!(message, "`{first_name}`").unwrap();
+            writeln!(message, "`{first_name:?}`").unwrap();
             for name in names.chain(core::iter::once(first_name)) {
                 writeln!(message, " ... which must run before `{name:?}`").unwrap();
             }
@@ -382,6 +349,28 @@ impl DependencyGraph {
         }
 
         message
+    }
+
+    fn color(&self, subgraph: &mut DependencyGraph, parent: NodeId) {
+        self.neighbors(parent).for_each(|neighbor| {
+            if subgraph.contains_node(neighbor) {
+                return;
+            }
+            subgraph.add_node(neighbor);
+            subgraph.add_edge(parent, neighbor);
+            self.color(subgraph, neighbor);
+        })
+    }
+
+    pub(crate) fn subgraph(&self, node: NodeId) -> DependencyGraph {
+        let mut subgraph = DependencyGraph {
+            nodes: IndexMap::default(),
+            edges: HashSet::default(),
+            topsort: Vec::default(),
+        };
+        subgraph.add_node(node);
+        self.color(&mut subgraph, node);
+        subgraph
     }
 }
 
@@ -401,7 +390,6 @@ pub fn simple_cycles_in_component(graph: &DependencyGraph, scc: &[NodeId]) -> Ve
         // only look at nodes and edges in this strongly-connected component
         let mut subgraph = DependencyGraph::default();
         for &node in &scc {
-            // note: these are already existent nodes so this won't panic
             subgraph.add_node(node);
         }
 
