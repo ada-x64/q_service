@@ -1,281 +1,370 @@
+use std::time::{Duration, Instant};
+
 use bevy::prelude::*;
 use q_service::prelude::*;
 mod common;
 use common::*;
 
+#[derive(Resource, Default, Debug)]
+struct Simple;
+impl Service for Simple {
+    fn build(_: &mut ServiceScope<Self>) {}
+}
+
 #[test]
 fn simple() {
     let mut app = setup();
-    app.add_service(TestService::default_spec());
+    app.register_service::<Simple>();
     app.update();
-    let world = app.world_mut();
-    let s = world.resource_mut::<TestService>();
-    assert!(matches!(s.state(), ServiceState::Uninitialized));
+    let status = app.world().service::<Simple>().status();
+    assert!(matches!(
+        status,
+        ServiceStatus::Down(DownReason::Uninitialized)
+    ));
+
+    app.world_mut().commands().spin_service_up::<Simple>();
+    app.update();
+    let status = app.world().service::<Simple>().status();
+    assert!(matches!(status, ServiceStatus::Up));
+
+    app.world_mut().commands().spin_service_down::<Simple>();
+    app.update();
+    let status = app.world().service::<Simple>().status();
+    assert!(matches!(status, ServiceStatus::Down(DownReason::SpunDown)));
+}
+
+#[derive(Resource, Default, Debug)]
+struct NoDupes;
+impl Service for NoDupes {
+    fn build(scope: &mut ServiceScope<Self>) {
+        scope.on_up(count_up).is_startup(true);
+    }
+}
+
+#[test]
+fn no_dupes() {
+    let mut app = setup();
+    app.init_resource::<Count>()
+        .register_service::<NoDupes>()
+        .register_service::<NoDupes>();
+    app.update();
+    let count = app.world().resource::<Count>();
+    assert_eq!(count.up, 1);
+}
+
+#[derive(Resource, Default, Debug)]
+struct HookFailure;
+impl Service for HookFailure {
+    fn build(scope: &mut ServiceScope<Self>) {
+        scope.init_with(|| Err("oh no".into())).is_startup(true);
+    }
 }
 
 #[test]
 fn hook_failure() {
     let mut app = setup();
-    app.add_service(TestService::default_spec().is_startup(true).on_init(|| {
-        info!("In hook");
-        Err(TestErr::A)
-    }));
+    app.register_service::<HookFailure>();
     app.update();
-    let world = app.world_mut();
-    let service = world.resource_mut::<TestService>();
-    assert_eq!(
-        service.state(),
-        &ServiceState::Failed(ServiceErrorKind::Own(TestErr::A))
+    let status = app.world().service::<HookFailure>().status();
+    matches!(
+        status,
+        ServiceStatus::Down(DownReason::Failed(ServiceError::Own(_)))
     );
 }
 
-#[test]
-fn manual_init() {
-    let mut app = setup();
-    app.add_service(TestService::default_spec());
-    app.update();
-    app.world_mut()
-        .commands()
-        .init_service(TestService::handle());
-    app.update();
-    let world = app.world_mut();
-    let service = world.resource_mut::<TestService>();
-    assert_eq!(service.state(), &ServiceState::Enabled);
-}
-
-#[derive(Resource, Debug, Default, PartialEq)]
-pub struct TestHooks {
-    init: bool,
-    enable: bool,
-    disable: bool,
-    fail: bool,
-    update: bool,
+#[derive(Resource, Default, Debug)]
+struct Hooks;
+impl Service for Hooks {
+    fn build(scope: &mut ServiceScope<Self>) {
+        scope
+            .init_with(count_init)
+            .deinit_with(count_deinit)
+            .on_up(count_up)
+            .on_down(count_down);
+    }
 }
 
 #[test]
 fn hooks() {
     let mut app = setup();
-    app.init_resource::<TestHooks>();
-    let spec = TestService::default_spec()
-        .is_startup(true)
-        .on_init(|mut hooks_ran: ResMut<TestHooks>| {
-            debug!("init");
-            hooks_ran.init = true;
-            Ok(true)
-        })
-        .on_enable(|mut hooks_ran: ResMut<TestHooks>| {
-            debug!("enable");
-            hooks_ran.enable = true;
-            Ok(())
-        })
-        .on_update(|_: In<()>, mut hooks_ran: ResMut<TestHooks>| {
-            debug!("update");
-            hooks_ran.update = true;
-            Ok(())
-        })
-        .on_disable(|mut hooks_ran: ResMut<TestHooks>| {
-            debug!("disable");
-            hooks_ran.disable = true;
-            Err(TestErr::A)
-        })
-        .on_failure(
-            |_err: In<ServiceErrorKind<TestErr>>, mut hooks_ran: ResMut<TestHooks>| {
-                debug!("failure");
-                hooks_ran.fail = true;
-            },
-        );
-    println!("{spec:#?}");
-    app.add_service(spec);
+    app.init_resource::<Count>().register_service::<Hooks>();
+    app.world_mut().commands().spin_service_up::<Hooks>();
     app.update();
-    app.world_mut()
-        .commands()
-        .update_service(TestService::handle(), ());
-    app.update();
-    app.world_mut()
-        .commands()
-        .disable_service(TestService::handle());
+    app.world_mut().commands().spin_service_down::<Hooks>();
     app.update();
     assert_eq!(
-        app.world_mut().resource::<TestHooks>(),
-        &TestHooks {
-            init: true,
-            enable: true,
-            disable: true,
-            fail: true,
-            update: true,
+        app.world_mut().resource::<Count>(),
+        &Count {
+            init: 1,
+            up: 1,
+            down: 1,
+            deinit: 1,
         }
     );
 }
 
+#[derive(Default, Resource, Debug)]
+struct Events;
+impl Service for Events {
+    fn build(scope: &mut ServiceScope<Self>) {
+        scope.init_with(noop_init).deinit_with(noop_init);
+    }
+}
+fn noop_init() -> InitResult {
+    let hook = AsyncHook::io_task(async |_| Ok(()));
+    Ok(Some(hook))
+}
+
 #[test]
-fn events() {
+fn respond_to_events() {
     let mut app = setup();
-    app.init_resource::<TestHooks>();
-    // NOTE: This fails with `is_startup(true)`. Probably because observers need
-    // to be instantiated before events can fire.
-    app.add_service(TestService::default_spec())
-        .add_observer(
-            |t: Trigger<TestServiceStateChange>,
-             mut r: ResMut<TestHooks>,
-             mut commands: Commands| {
-                match t.event().0.1 {
-                    ServiceState::Initializing => {
-                        r.init = true;
+    app.init_resource::<Count>();
+    app.register_service::<Events>().add_systems(
+        Update,
+        |mut events: EventReader<EnterServiceState<Events>>,
+         mut r: ResMut<Count>,
+         mut commands: Commands| {
+            for event in events.read() {
+                match &**event {
+                    ServiceStatus::Init => r.init += 1,
+                    ServiceStatus::Up => {
+                        r.up += 1;
+                        commands.spin_service_down::<Events>();
                     }
-                    ServiceState::Enabled => {
-                        r.enable = true;
-                        commands.update_service(TestService::handle(), ())
+                    ServiceStatus::Deinit(_) => r.deinit += 1,
+                    ServiceStatus::Down(_) => {
+                        r.down += 1;
                     }
-                    ServiceState::Disabled => {
-                        r.disable = true;
-                        commands
-                            .fail_service(TestService::handle(), ServiceErrorKind::Own(TestErr::A));
-                    }
-                    ServiceState::Failed(_) => r.fail = true,
-                    _ => {}
                 }
-            },
-        )
-        .add_observer(
-            |_: Trigger<TestServiceUpdated>, mut r: ResMut<TestHooks>, mut commands: Commands| {
-                r.update = true;
-                commands.disable_service(TestService::handle());
-            },
-        );
-    app.world_mut()
-        .commands()
-        .init_service(TestService::handle());
-    app.update();
-    app.update();
+            }
+        },
+    );
+    app.world_mut().commands().spin_service_up::<Events>();
+    app.update(); // init
+    app.update(); // up
+    app.update(); // deinit
+    app.update(); // down
     assert_eq!(
-        app.world_mut().resource::<TestHooks>(),
-        &TestHooks {
-            init: true,
-            enable: true,
-            disable: true,
-            fail: true,
-            update: true,
+        app.world_mut().resource::<Count>(),
+        &Count {
+            init: 1,
+            up: 1,
+            down: 1,
+            deinit: 1,
         }
     );
 }
+
+// #[test]
+// fn observers() {
+//     let mut app = setup();
+//     app.init_resource::<Count>();
+//     app.register_service::<Events>().add_observer(
+//         |trigger: Trigger<EnterServiceState<Events>>,
+//          mut r: ResMut<Count>,
+//          mut commands: Commands| {
+//             match &**trigger.event() {
+//                 ServiceStatus::Init => {
+//                     debug!("init!");
+//                     r.init += 1;
+//                 }
+//                 ServiceStatus::Up => {
+//                     debug!("up!");
+//                     r.up += 1;
+//                     commands.spin_service_down::<Events>();
+//                 }
+//                 ServiceStatus::Deinit(_) => {
+//                     debug!("deinit!");
+//                     r.deinit += 1;
+//                 }
+//                 ServiceStatus::Down(_) => {
+//                     debug!("down!");
+//                     r.down += 1;
+//                 }
+//             }
+//         },
+//     );
+//     // note: These are all observers so they _should_ be happening ASAP,
+//     // but async polling is happening once per update, making this relatively slow...
+//     app.world_mut().commands().spin_service_up::<Events>();
+//     app.update(); // init
+//     app.update(); // up
+//     app.update(); // deinit
+//     app.update(); // down
+//     assert_eq!(
+//         app.world_mut().resource::<Count>(),
+//         &Count {
+//             init: 1,
+//             up: 1,
+//             down: 1,
+//             deinit: 1,
+//         }
+//     );
+// }
 
 #[derive(Resource, Default, Debug, PartialEq)]
 struct Ran {
     service_has_state: bool,
-    service_uninitialized: bool,
-    // service_initializing: bool,
-    service_enabled: bool,
-    service_disabled: bool,
+    service_initializing: bool,
+    service_up: bool,
+    service_deinitializing: bool,
+    service_down: bool,
     service_failed: bool,
     service_failed_with_error: bool,
 }
 
 macro_rules! check_run_condition {
-    ($app:ident, $condition:ident) => {
+    ($app:ident, $t:ty, $condition:ident) => {
         $app.add_systems(
             Update,
             (|mut ran: ResMut<Ran>| {
                 ran.$condition = true;
             })
-            .run_if($condition(TestService::handle())),
+            .run_if($condition::<$t>()),
         );
     };
+}
+
+#[derive(Default, Resource, Debug)]
+struct RunConditions;
+impl Service for RunConditions {
+    fn build(scope: &mut ServiceScope<Self>) {
+        scope
+            .init_with(run_condition_async)
+            .deinit_with(run_condition_async);
+    }
+}
+
+fn busy_wait(millis: u64) {
+    let start = Instant::now();
+    while Instant::now().duration_since(start) <= Duration::from_millis(millis) {}
+}
+fn run_condition_async() -> InitResult {
+    let task = AsyncHook::async_compute_task(async |_| {
+        debug!("In AsyncComputeTaskPool");
+        busy_wait(100);
+        debug!("...AsyncComputeTaskPool DONE");
+        Ok(())
+    });
+    Ok(Some(task))
 }
 
 #[test]
 fn run_conditions() {
     let mut app = setup();
     app.init_resource::<Ran>();
-    app.add_service(TestService::default_spec());
+    app.register_service::<RunConditions>();
     app.add_systems(
         Update,
         (|mut ran: ResMut<Ran>| {
             ran.service_has_state = true;
         })
-        .run_if(service_has_state(
-            TestService::handle(),
-            ServiceState::Enabled,
-        )),
+        .run_if(service_has_status::<RunConditions>(ServiceStatus::Up)),
     );
     app.add_systems(
         Update,
         (|mut ran: ResMut<Ran>| {
             ran.service_failed_with_error = true;
         })
-        .run_if(service_failed_with_error(
-            TestService::handle(),
-            ServiceErrorKind::Own(TestErr::A),
+        .run_if(service_failed_with_error::<RunConditions>(
+            ServiceError::Own("oh no".into()),
         )),
     );
-    check_run_condition!(app, service_uninitialized);
-    // check_run_condition!(app, service_initializing);
-    check_run_condition!(app, service_enabled);
-    check_run_condition!(app, service_disabled);
-    check_run_condition!(app, service_failed);
+    check_run_condition!(app, RunConditions, service_initializing);
+    check_run_condition!(app, RunConditions, service_up);
+    check_run_condition!(app, RunConditions, service_down);
+    check_run_condition!(app, RunConditions, service_deinitializing);
+    check_run_condition!(app, RunConditions, service_failed);
 
-    app.update();
+    app.update(); // service_down
     app.world_mut()
         .commands()
-        .init_service(TestService::handle());
-    app.update();
+        .spin_service_up::<RunConditions>();
+    app.update(); // service_initializing
+    busy_wait(200); // wait for it to be finished...
+    app.update(); // service_up, service_has_status(up)
     app.world_mut()
         .commands()
-        .enable_service(TestService::handle());
-    app.update();
-    app.world_mut()
-        .commands()
-        .disable_service(TestService::handle());
-    app.update();
-    app.world_mut()
-        .commands()
-        .fail_service(TestService::handle(), ServiceErrorKind::Own(TestErr::A));
-    app.update();
+        .fail_service::<RunConditions>(ServiceError::Own("oh no".into()));
+    app.update(); // deinit
+    busy_wait(200); // wait for it to be finished...
+    app.update(); // service_down, service_failed, service_failed_with
 
     let all_ok = Ran {
         service_has_state: true,
-        service_uninitialized: true,
-        // TODO: This will only be called if initializing takes more than one
-        // frame! Need async init before we can test this.
-        // service_initializing: true,
-        service_enabled: true,
-        service_disabled: true,
+        service_initializing: true,
+        service_up: true,
+        service_deinitializing: true,
+        service_down: true,
         service_failed: true,
         service_failed_with_error: true,
     };
     assert_eq!(app.world().resource::<Ran>(), &all_ok);
 }
 
-#[derive(Resource, Default, Debug, PartialEq)]
-struct Errors(Vec<ServiceErrorKind<TestErr>>);
-
 #[test]
-fn uninitialized() {
+fn redundant_calls() {
     let mut app = setup();
-    app.add_service(TestService::default_spec().on_failure(
-        |e: In<_>, mut errs: ResMut<Errors>| {
-            errs.0.push(e.0);
-        },
-    ))
-    .init_resource::<Errors>()
-    .add_systems(Startup, |mut commands: Commands| {
-        commands.disable_service(TestService::handle()); // this should fail.
-        commands.enable_service(TestService::handle()); // this should initialize.
-        commands.init_service(TestService::handle()); // this should fail.
-    });
+    app.register_service::<Hooks>().init_resource::<Count>();
+    // this should warn and do nothing.
+    app.world_mut().commands().spin_service_down::<Hooks>();
     app.update();
+    // this should initialize.
+    app.world_mut().commands().spin_service_up::<Hooks>();
     app.update();
-    let errors = app.world().resource::<Errors>();
-    let display_name = TestService::handle().to_string();
+    // this should  warn and do nothing.
+    app.world_mut().commands().spin_service_up::<Hooks>();
+    app.update();
+    // this should re-initialize
+    app.world_mut().commands().restart_service::<Hooks>();
+    app.update();
+    let count = app.world().resource::<Count>();
     assert_eq!(
-        errors.0,
-        vec![
-            ServiceErrorKind::Uninitialized(display_name.clone()),
-            ServiceErrorKind::AlreadyInitialized(display_name.clone()),
-        ]
+        count,
+        &Count {
+            up: 2,
+            init: 2,
+            down: 0,
+            deinit: 0,
+        }
     );
-    let state = &app.world().resource::<TestService>().state();
-    assert!(matches!(state, ServiceState::Enabled));
+    let status = app.world().service::<Hooks>().status();
+    assert!(matches!(status, ServiceStatus::Up));
 }
 
-// TODO: Async initialization
-// ------> maybe do Initializing(f32) (gloss as percentage)
+#[test]
+fn command_priority() {
+    let mut app = setup();
+    app.register_service::<Hooks>().init_resource::<Count>();
+    app.world_mut().commands().spin_service_up::<Hooks>();
+    app.update();
+    assert!(app.world_mut().service::<Hooks>().status().is_up());
+    // this should spin down.
+    // app is up so priority of down = 2, priority of up = 3
+    app.world_mut().commands().spin_service_down::<Hooks>();
+    app.world_mut().commands().spin_service_up::<Hooks>();
+    app.update();
+    assert!(app.world_mut().service::<Hooks>().status().is_down());
+    // this should spin up.
+    // app is down so priority of down = 3, priority of up = 2
+    app.world_mut().commands().spin_service_down::<Hooks>();
+    app.world_mut().commands().spin_service_up::<Hooks>();
+    app.update();
+    assert!(app.world_mut().service::<Hooks>().status().is_up());
+    // this should spin up.
+    // app is up so priority of down = 2, but priority of restart = 1
+    app.world_mut().commands().spin_service_down::<Hooks>();
+    app.world_mut().commands().restart_service::<Hooks>();
+    app.update();
+    assert!(app.world_mut().service::<Hooks>().status().is_up());
+    // this should fail.
+    // priority of fail = 0, will overpower everything
+    app.world_mut().commands().spin_service_down::<Hooks>();
+    app.world_mut().commands().spin_service_up::<Hooks>();
+    app.world_mut().commands().restart_service::<Hooks>();
+    app.world_mut()
+        .commands()
+        .fail_service::<Hooks>(ServiceError::Own("oh no".to_string()));
+    app.update();
+    assert!(app.world_mut().service::<Hooks>().status().is_failed());
+}

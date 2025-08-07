@@ -1,10 +1,8 @@
 #![doc=include_str!("./doc.md")]
 
-/// Extends [Commands](bevy_ecs::prelude::Commands) with service functionality.
+/// Events used to update the service lifecycle.
 pub mod commands;
-/// Events for interacting with services.
+/// Events for reacting to service changes.
 pub mod events;
 /// Hooks used to intercept lifecycle stages.
 pub mod hooks;
-/// Run conditions for systems based on service state.
-pub mod run_conditions;

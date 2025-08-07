@@ -3402,7 +3402,7 @@ checksum = "3eb8486b569e12e2c32ad3e204dbaba5e4b5b216e9367044f25f1dba42341773"
 
 [[package]]
 name = "q_service"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bevy",
  "bevy_app",
@@ -3410,22 +3410,15 @@ dependencies = [
  "bevy_derive",
  "bevy_ecs",
  "bevy_platform",
+ "bevy_state",
+ "bevy_tasks",
  "derivative",
  "indexmap",
  "paste",
- "q_service_macros",
  "slotmap",
  "smallvec",
  "thiserror 2.0.12",
  "tracing",
-]
-
-[[package]]
-name = "q_service_macros"
-version = "0.1.0"
-dependencies = [
- "quote",
- "syn 2.0.104",
 ]
 
 [[package]]

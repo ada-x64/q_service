@@ -1,6 +1,6 @@
 // Copied from bevy_ecs@0.16.1
 
-use crate::deps::graph::DependencyGraph;
+use crate::graph::DependencyGraph;
 
 use super::NodeId;
 use core::num::NonZeroUsize;
@@ -93,9 +93,7 @@ where
     index_adjustment: Option<usize>,
 }
 
-impl<'graph, A: Iterator<Item = NodeId>, N: Iterator<Item = NodeId>>
-    TarjanScc<'graph, A, N>
-{
+impl<'graph, A: Iterator<Item = NodeId>, N: Iterator<Item = NodeId>> TarjanScc<'graph, A, N> {
     /// Compute the next *strongly connected component* using Algorithm 3 in
     /// [A Space-Efficient Algorithm for Finding Strongly Connected
     /// Components][1] by David J. Pierce, which is a memory-efficient
@@ -137,8 +135,7 @@ impl<'graph, A: Iterator<Item = NodeId>, N: Iterator<Item = NodeId>>
                 break None;
             };
 
-            let visited =
-                self.nodes[self.graph.to_index(node)].root_index.is_some();
+            let visited = self.nodes[self.graph.to_index(node)].root_index.is_some();
 
             // If this node hasn't already been visited (e.g., it was the
             // neighbor of a previously checked node) add it to the
@@ -154,11 +151,7 @@ impl<'graph, A: Iterator<Item = NodeId>, N: Iterator<Item = NodeId>>
     /// `None` and mark the required neighbor and the current node as in
     /// need of visitation again. If no SCC can be found in the current
     /// visitation stack, returns `None`.
-    fn visit_once(
-        &mut self,
-        v: NodeId,
-        mut v_is_local_root: bool,
-    ) -> Option<usize> {
+    fn visit_once(&mut self, v: NodeId, mut v_is_local_root: bool) -> Option<usize> {
         let node_v = &mut self.nodes[self.graph.to_index(v)];
 
         if node_v.root_index.is_none() {
@@ -167,8 +160,7 @@ impl<'graph, A: Iterator<Item = NodeId>, N: Iterator<Item = NodeId>>
             self.index += 1;
         }
 
-        while let Some(w) = self.nodes[self.graph.to_index(v)].neighbors.next()
-        {
+        while let Some(w) = self.nodes[self.graph.to_index(v)].neighbors.next() {
             // If a neighbor hasn't been visited yet...
             if self.nodes[self.graph.to_index(w)].root_index.is_none() {
                 // Push the current node and the neighbor back onto the

@@ -1,108 +1,186 @@
+use bevy_derive::{Deref, DerefMut};
+use bevy_ecs::resource::Resource;
+use bevy_platform::collections::HashMap;
+
 use crate::prelude::*;
-use std::{
-    any::type_name,
-    error::Error,
-    fmt::{Debug, Display},
-    hash::Hash,
-    marker::PhantomData,
-};
+use std::{fmt::Debug, hash::Hash};
 
-/// A type which can be used as the unique identifer of a service.
-/// Note that this _must be unique,_ otherwise instantiating a service with this
-/// label will override any previous such services.
-///
-/// __You probably want to use the `service!` macro instead of deriving this yourself.__
-pub trait ServiceLabel: Send + Sync + Clone + PartialEq + Eq + Debug + Hash + 'static {}
-
-/// An arbitrary data type which can be used as extra state information for a
-/// service.
-///
-/// If using feature derive, you can derive this.
-pub trait ServiceData: Clone + Debug + PartialEq + Default + Send + Sync + 'static {}
-impl ServiceData for () {}
-
-/// The error type for a service.
-///
-/// If using feature derive, you can derive this.
-pub trait ServiceError: Error + Clone + PartialEq + Send + Sync + 'static {}
-
-/// A wrapper around the ServiceError trait. Used to specify where and how the
-/// service failed.
-#[allow(missing_docs)]
+/// Used to specify where and how the service failed.
 #[derive(thiserror::Error, Debug, Clone, PartialEq, Eq, Hash)]
-pub enum ServiceErrorKind<E>
-where
-    E: ServiceError,
-{
+pub enum ServiceError {
+    /// The service failed all by itself!
     #[error("{0}")]
-    Own(#[from] E),
-    #[error("Dependency {0} of {1} failed with error:\n{2}")]
-    Dependency(String, String, String),
-    #[error("Dependency of {0} failed to initialize with error:\n{1}.")]
-    DepInit(String, String),
-    #[error("Service {0} is already initialized.")]
-    AlreadyInitialized(String),
-    #[error("Service {0} is uninitialized.")]
-    Uninitialized(String),
+    Own(String),
+    // Not boxing here because IsServiceError is not dyn compatible.
+    /// A dependency failed, propogating to this service.
+    #[error("Dependency {0} failed with error:\n{1}")]
+    Dependency(String, String),
 }
-impl<E: ServiceError> ServiceError for ServiceErrorKind<E> {}
 
-/// A handle for the given service. Used to refer to the service when it is not
-/// directly available.
-/// Usually accessed through [Service::handle].
-#[derive(Debug, Default, Clone, Copy)]
-pub struct ServiceHandle<T, D, E>(pub PhantomData<T>, pub PhantomData<D>, pub PhantomData<E>)
-where
-    T: ServiceLabel,
-    D: ServiceData,
-    E: ServiceError;
-impl<T, D, E> ServiceHandle<T, D, E>
-where
-    T: ServiceLabel,
-    D: ServiceData,
-    E: ServiceError,
-{
-    #[allow(missing_docs)]
-    pub const fn const_default() -> Self {
-        Self(PhantomData, PhantomData, PhantomData)
-    }
-    #[allow(missing_docs)]
-    pub fn from_service(_: &Service<T, D, E>) -> Self {
-        Self::const_default()
-    }
-    #[allow(missing_docs)]
-    pub fn from_spec(_: &ServiceSpec<T, D, E>) -> Self {
-        Self::const_default()
-    }
-}
-impl<T, D, E> Display for ServiceHandle<T, D, E>
-where
-    T: ServiceLabel,
-    D: ServiceData,
-    E: ServiceError,
-{
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // of form "some::path::to::service_impl::MyServiceLabel"
-        let mut base = type_name::<T>();
-        let last_colon = base.rfind(':');
-        if let Some(idx) = last_colon {
-            base = base.split_at(idx + 1).1;
-        }
-        f.write_str(base.split_at(base.len() - 5).0)
-    }
-}
+// #[derive(Debug, States, Deref)]
+// pub struct ServiceStates<T: Service>(#[deref] ServiceState, PhantomData<T>);
+// impl<T: Service> ServiceStates<T> {
+//     pub fn new(status: ServiceState) -> Self {
+//         Self(status, PhantomData)
+//     }
+// }
+// impl<T> Clone for ServiceStates<T>
+// where
+//     T: Service,
+// {
+//     fn clone(&self) -> Self {
+//         Self(self.0.clone(), self.1)
+//     }
+// }
+// impl<T> PartialEq for ServiceStates<T>
+// where
+//     T: Service,
+// {
+//     fn eq(&self, other: &Self) -> bool {
+//         self.0 == other.0 && self.1 == other.1
+//     }
+// }
+// impl<T> Eq for ServiceStates<T> where T: Service {}
+// impl<T> Hash for ServiceStates<T>
+// where
+//     T: Service,
+// {
+//     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+//         self.0.hash(state);
+//         self.1.hash(state);
+//     }
+// }
 
 /// Tracks the current state of the service.
-/// This does not use the built-in States trait.
 /// In order to react to changes, use [events](crate::lifecycle::events) or
 /// [service hooks](crate::lifecycle::hooks).
-#[allow(missing_docs)]
-#[derive(Debug, Clone, Eq, PartialEq, Hash, Default)]
-pub enum ServiceState<E: ServiceError> {
-    #[default]
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+pub enum ServiceStatus {
+    /// The service is currently down.
+    Down(DownReason),
+    /// The service is asychronously deinitializing.
+    Deinit(DownReason),
+    /// The service is asychronously initializing.
+    Init,
+    /// The service is up and running.
+    Up,
+}
+impl ServiceStatus {
+    /// Self::Down(DownReason::SpunDown)
+    pub fn down() -> Self {
+        Self::Down(DownReason::SpunDown)
+    }
+    /// Self::Deinit(DownReason::SpunDown)
+    pub fn deinit() -> Self {
+        Self::Deinit(DownReason::SpunDown)
+    }
+    /// Self::Down(DownReason::Failed(reason))
+    pub fn failed(reason: ServiceError) -> Self {
+        Self::Down(DownReason::Failed(reason))
+    }
+    /// Self::Deinit(DownReason::Failed(reason))
+    pub fn failing(reason: ServiceError) -> Self {
+        Self::Deinit(DownReason::Failed(reason))
+    }
+    /// Self::Down(DownReason::Uninitialized)
+    pub fn uninit() -> Self {
+        Self::Down(DownReason::Uninitialized)
+    }
+}
+impl Default for ServiceStatus {
+    fn default() -> Self {
+        Self::Down(DownReason::Uninitialized)
+    }
+}
+impl ServiceStatus {
+    #[allow(missing_docs)]
+    pub fn is_down(&self) -> bool {
+        matches!(self, ServiceStatus::Down(_))
+    }
+    #[allow(missing_docs)]
+    pub fn is_initializing(&self) -> bool {
+        matches!(self, ServiceStatus::Init)
+    }
+    #[allow(missing_docs)]
+    pub fn is_up(&self) -> bool {
+        matches!(self, ServiceStatus::Up)
+    }
+    #[allow(missing_docs)]
+    pub fn is_failed(&self) -> bool {
+        matches!(self, ServiceStatus::Down(DownReason::Failed(_)))
+    }
+    #[allow(missing_docs)]
+    pub fn is_failing(&self) -> bool {
+        matches!(self, ServiceStatus::Deinit(DownReason::Failed(_)))
+    }
+    #[allow(missing_docs)]
+    pub fn is_deinitializing(&self) -> bool {
+        matches!(self, ServiceStatus::Deinit(_))
+    }
+}
+/// Describes the reason the service is currently down.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum DownReason {
+    /// The service hasn't yet been initialized.
     Uninitialized,
-    Initializing,
-    Enabled,
-    Disabled,
-    Failed(ServiceErrorKind<E>),
+    /// At some point, this service failed. Contains the error, which might be from a dependency.
+    /// See [ServiceError] for more details.
+    Failed(ServiceError),
+    /// The service succesfully spun down.
+    SpunDown,
+}
+impl DownReason {
+    /// The service itself failed. Distinct from [DownReason::dep_failure()]
+    pub fn failed(err: impl ToString) -> Self {
+        Self::Failed(ServiceError::Own(err.to_string()))
+    }
+    /// One of the service's dependencies failed. Distint from [DownReason::failed()].
+    pub fn dep_failure<Dependency: Service>(err: impl ToString) -> Self {
+        Self::Failed(ServiceError::Dependency(
+            Dependency::name().to_string(),
+            err.to_string(),
+        ))
+    }
+}
+
+/// The main storage mechanism for services.
+///
+/// Services and their dependencies are stored as nodes within a dependency
+/// graph. All associated data is stored here for efficiency's sake.
+#[derive(Resource, Deref, DerefMut, Default)]
+pub struct GraphDataCache(HashMap<NodeId, GraphData>);
+#[allow(missing_docs, reason = "obvious")]
+impl GraphDataCache {
+    pub fn get_service(&self, id: NodeId) -> Option<&ServiceData> {
+        self.get(&id).and_then(|dep| dep.as_service())
+    }
+    pub fn get_service_mut(&mut self, id: NodeId) -> Option<&mut ServiceData> {
+        self.get_mut(&id).and_then(|dep| dep.as_service_mut())
+    }
+
+    pub fn get_resource(&self, id: NodeId) -> Option<&ResourceData> {
+        self.get(&id).and_then(|dep| dep.as_resource())
+    }
+    pub fn get_resource_mut(&mut self, id: NodeId) -> Option<&mut ResourceData> {
+        self.get_mut(&id).and_then(|dep| dep.as_resource_mut())
+    }
+
+    pub fn get_asset(&self, id: NodeId) -> Option<&AssetData> {
+        self.get(&id).and_then(|dep| dep.as_asset())
+    }
+    pub fn get_asset_mut(&mut self, id: NodeId) -> Option<&mut AssetData> {
+        self.get_mut(&id).and_then(|dep| dep.as_asset_mut())
+    }
+}
+
+/// Gets the name of a type as a string.
+/// Truncates up to the last colon.
+pub fn name_from_type<T>() -> String {
+    // of form "some::path::to::service_impl::MyService"
+    let mut base = std::any::type_name::<T>();
+    let last_colon = base.rfind(':');
+    if let Some(idx) = last_colon {
+        base = base.split_at(idx + 1).1;
+    }
+    base.to_string()
 }

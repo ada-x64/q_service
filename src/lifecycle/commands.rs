@@ -1,117 +1,107 @@
 use crate::prelude::*;
 use bevy_ecs::prelude::*;
-use tracing::*;
+use std::marker::PhantomData;
+use tracing::debug;
 
-macro_rules! command_trait {
-    ($( ($name:ident, $doc:expr $(, $data:ty )* $(,)?)$(,)?)*) => {
-        /// Extends [Commands] with service-related functionality.
-        pub trait ServiceLifecycleCommands {
-            $crate::paste::paste! {
-                $(
-                    #[doc=$doc]
-                    fn [<$name:snake:lower _service>]<T, D, E>(&mut self, handle: ServiceHandle<T, D, E> $(, data: $data)*)
-                        where
-                            T: ServiceLabel,
-                            D: ServiceData,
-                            E: ServiceError;
-                )*
-            }
-        }
-        impl<'w, 's> ServiceLifecycleCommands for Commands<'w, 's> {
-            $crate::paste::paste! {
-                $(
-                    fn [<$name:snake:lower _service>]<T, D, E>(&mut self, handle: ServiceHandle<T, D, E> $(, data: $data)*)
-                        where
-                            T: ServiceLabel,
-                            D: ServiceData,
-                            E: ServiceError,
-                    {
-                        self.queue([<$name:camel Service>]::<T, D, E>::new(handle $(, data as $data)*));
-                    }
-                )*
-            }
-        }
-    };
+#[derive(Event, Debug)]
+pub(crate) enum LifecycleCommand<S: Service> {
+    SpinUp,
+    SpinDown,
+    Restart,
+    Fail(ServiceError),
+    _Placeholder(PhantomData<S>),
 }
-command_trait!(
-    (
-        Init,
-        "Directly initializes the service. See [module-level docs](crate::lifecycle) for more info.",
-    ),
-    (
-        Enable,
-        "Directly enables the service. See [module-level docs](crate::lifecycle) for more info.",
-    ),
-    (
-        Disable,
-        "Directly disables the service. See [module-level docs](crate::lifecycle) for more info.",
-    ),
-    (
-        Fail,
-        "Directly fails the service. This will shut the service down. See [module-level docs](crate::lifecycle) for more info.",
-        ServiceErrorKind<E>
-    ),
-    (
-        Update,
-        "Directly updates the service. This calls the update hook, potentially transforming the input data before storing it in the service.
-        See [module-level docs](crate::lifecycle) for more info.",
-        D
-    )
-);
-
-macro_rules! commands {
-    ($(( $name:ident, $fn:ident $(, ($input_name:ident : $input_ty: ty))?))*) => {
-        $(
-        pub(crate) struct $name<T, D, E>(ServiceHandle<T, D, E> $(, $input_ty)*)
-        where
-            T: ServiceLabel,
-            D: ServiceData,
-            E: ServiceError;
-        impl<T, D, E> $name<T, D, E>
-        where
-            T: ServiceLabel,
-            D: ServiceData,
-            E: ServiceError,
-        {
-            pub fn new(handle: ServiceHandle<T,D,E> $(, $input_name : $input_ty)?) -> Self {
-                Self(handle $(, $input_name)*)
-            }
-        }
-
-        impl_command!($name, $fn $(, ($input_name: $input_ty))?);
-        )+
-    };
-}
-
-macro_rules! impl_command {
-    ($name:ident, $fn:ident $(, ($input_name:ident : $input_ty: ty ))?) => {
-        impl<T, D, E> Command for $name<T, D, E>
-        where
-            T: ServiceLabel,
-            D: ServiceData,
-            E: ServiceError,
-        {
-            fn apply(self, world: &mut World) {
-                if world.get_resource::<Service<T,D,E>>().is_none() {
-                    let mut msg = "Tried to get missing service.".to_string();
-                    msg += "\n.. Did you try calling a hook within a hook?\n.. If so, prefer using service state change events.";
-                    msg += "\n.. Did you forget to register your service?\n.. If so, make sure to call `app.add_service(MyService::defuault_spec())`.";
-                    return warn!("{msg}");
+impl<S: Service> LifecycleCommand<S> {
+    /// Lower number = higher priority, should execute first.
+    pub(crate) fn priority(&self, service_status: ServiceStatus) -> u8 {
+        match self {
+            LifecycleCommand::Fail(_) => 0,
+            LifecycleCommand::Restart => 1,
+            LifecycleCommand::SpinUp => {
+                if service_status.is_up() {
+                    3
+                } else {
+                    2
                 }
-                world.resource_scope(
-                    |world, mut service: Mut<Service<T, D, E>>| {
-                        let _ = service.$fn(world $(, self.1 as $input_ty)?);
-                    },
-                )
             }
+            LifecycleCommand::SpinDown => {
+                if service_status.is_down() {
+                    3
+                } else {
+                    2
+                }
+            }
+            LifecycleCommand::_Placeholder(_) => unreachable!(),
         }
-    };
+    }
 }
 
-commands!(
-    (InitService, on_init)
-    (EnableService, on_enable)
-    (DisableService, on_disable)
-    (FailService, on_fail_cmd, (error: ServiceErrorKind<E>))
-    (UpdateService, on_update, (data: D))
-);
+/// Extensions for Commands to allow moving along the service lifecycle.
+pub trait ServiceCommandsExt {
+    /// Queue the service to be spun up. Will warn and do nothing if the service is already up.
+    fn spin_service_up<S: Service>(&mut self);
+    /// Queue the service to be spun down. Will warn and do nothing if the service is already down.
+    fn spin_service_down<S: Service>(&mut self);
+    /// Queue the service to be spun up, forcibly.
+    fn restart_service<S: Service>(&mut self);
+    /// Queues the service to fail with the given error. Will forcibly spin down the service.
+    fn fail_service<S: Service>(&mut self, reason: ServiceError);
+}
+impl<'w, 's> ServiceCommandsExt for Commands<'w, 's> {
+    fn spin_service_up<S: Service>(&mut self) {
+        debug!("spin_service_up");
+        self.send_event(LifecycleCommand::SpinUp::<S>);
+    }
+
+    fn spin_service_down<S: Service>(&mut self) {
+        debug!("spin_service_up");
+        self.send_event(LifecycleCommand::SpinDown::<S>);
+    }
+
+    fn restart_service<S: Service>(&mut self) {
+        debug!("spin_service_up");
+        self.send_event(LifecycleCommand::Restart::<S>);
+    }
+
+    fn fail_service<S: Service>(&mut self, reason: ServiceError) {
+        debug!("spin_service_up");
+        self.send_event(LifecycleCommand::Fail::<S>(reason));
+    }
+}
+
+/// Executes any queued up service lifecycle commands.
+#[tracing::instrument(skip_all)]
+pub(crate) fn watch_service_commands<S: Service>(
+    mut reader: EventReader<LifecycleCommand<S>>,
+    mut commands: Commands,
+    service: ServiceRef<S>,
+) {
+    let status = service.status();
+    if let Some(event) = reader.read().min_by(|a, b| {
+        let order = a.priority(status.clone()).cmp(&b.priority(status.clone()));
+        debug!("{a:?}.cmp({b:?}) = {order:?}");
+        order
+    }) {
+        debug!("({}) Got event {:?}", S::name(), event);
+        match event {
+            LifecycleCommand::SpinUp => commands.queue(|world: &mut World| {
+                world.service_scope::<S, ()>(|world, service| service.spin_up(world));
+            }),
+            LifecycleCommand::SpinDown => commands.queue(|world: &mut World| {
+                world.service_scope::<S, ()>(|world, service| service.spin_down(world));
+            }),
+            LifecycleCommand::Restart => commands.queue(|world: &mut World| {
+                world.service_scope::<S, ()>(|world, service| service.restart(world));
+            }),
+            LifecycleCommand::Fail(error) => {
+                let error = error.clone();
+                commands.queue(move |world: &mut World| {
+                    world.service_scope::<S, ()>(|world, service| {
+                        service.fail(world, error.clone())
+                    });
+                })
+            }
+            _ => unreachable!(),
+        }
+    }
+}

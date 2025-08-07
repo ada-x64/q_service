@@ -1,120 +1,56 @@
-use crate::{
-    deps::{graph::DependencyGraph, register_service_dep},
-    prelude::*,
-};
+use crate::prelude::*;
 use bevy_app::prelude::*;
-use bevy_ecs::prelude::*;
-use tracing::*;
 
-macro_rules! events {
-    ($app:ident, $($name:ident $(,)?)* ) => {
-        $(
-            $app.add_event::<$name<T, D, E>>();
-        )*
-    }
-}
-
-macro_rules! observers {
-    ($app:ident, $( ( $name:ident $(, $err:ty )* )$(,)?)*) => {
-        $(
-            $crate::paste::paste! {
-                $app.add_observer(
-                    |trigger: Trigger<$name<T, D, E>>,
-                     mut commands: Commands| {
-                         commands.[<$name:snake:lower>](trigger.event().0.clone(), $(trigger.event().1.clone() as $err)*);
-                    },
-                );
-            }
-        )*
-    };
-}
-
-#[allow(missing_docs)]
-pub trait ServiceExt<T: ServiceLabel, D: ServiceData, E: ServiceError> {
-    /// Add a service to the application.
-    ///
-    /// This function takes in a [ServiceSpec], which should be specified using
-    /// the [service!] macro from this crate.
+/// Extensions to [App].
+pub trait ServiceAppExt {
+    /// Add a [Service] to the application.
     ///
     /// ## Example usage
     /// ```rust
-    /// use q_service::prelude::*;
-    /// use bevy::prelude::*;
-    ///
-    /// #[derive(ServiceError, thiserror::Error, Debug, PartialEq, Eq, Hash, Clone)]
-    /// pub enum ExampleErr {}
-    ///
-    /// service!(ExampleService, (), ExampleErr);
+    /// # use q_service::prelude::*;
+    /// # use bevy::prelude::*;
+    /// #[derive(Resource, Debug, Default)]
+    /// pub struct ExampleService;
+    /// impl Service for ExampleService {
+    ///     fn build(scope: &mut ServiceScope) {}
+    /// }
     ///
     /// fn main() {
-    ///     let mut app = App::new();
-    ///     app.add_service(ExampleService::default_spec());
+    ///   let mut app = App::new();
+    ///   app.register_service::<ExampleService>();
     /// }
     /// ```
     /// ## Panics
+    ///
     /// This function panics if cycles are detected in the ServiceSpec's
     /// dependencies.
-    fn add_service(&mut self, spec: ServiceSpec<T, D, E>) -> &mut Self;
+    fn register_service<T: Service>(&mut self) -> &mut Self;
+
+    // TODO: Dynamic system patching? Probably don't modify hooks.
+    // /// Patch a service using a [ServiceScope]. Useful for extending the service's functionality.
+    // /// the system is up. For similar use cases when the system is down or in
+    // /// another state, see [crate::run_conditions].
+    // ///
+    // /// ## Example usage
+    // /// ```rust
+    // /// # use q_service::prelude::*;
+    // /// # use bevy::prelude::*;
+    // /// # service!(ExampleService);
+    // /// #
+    // /// # fn main() {
+    // /// # let mut app = App::new();
+    // /// # fn sys_a() {}
+    // /// # fn sys_b() {}
+    // /// app.service_scope(|scope: ServiceScope<ExampleService>| {
+    // ///     scope.add_systems(Update, (sys_a, sys_b).chain());
+    // /// });
+    // /// # }
+    // /// ```
+    // fn service_scope<T: Service>(&mut self, cb: impl FnMut(ServiceScope<T>)) -> &mut Self;
 }
-impl<T: ServiceLabel, D: ServiceData, E: ServiceError> ServiceExt<T, D, E> for App {
-    fn add_service(&mut self, spec: ServiceSpec<T, D, E>) -> &mut Self {
-        let handle = ServiceHandle::<T, D, E>::const_default();
-        debug!("Adding service {}", handle);
-
-        // no dupes
-        if self.world().get_resource::<Service<T, D, E>>().is_some() {
-            warn!(
-                "Tried to add already existing service {:?}",
-                std::any::type_name::<T>()
-            );
-            return self;
-        }
-
-        // Register events
-        use crate::lifecycle::events::{DisableService, EnableService, FailService, InitService};
-
-        events!(
-            self,
-            EnterServiceState,
-            ExitServiceState,
-            EnableService,
-            DisableService,
-            InitService,
-            FailService,
-        );
-        observers!(
-            self,
-            (EnableService),
-            (DisableService),
-            (InitService),
-            (FailService, ServiceErrorKind<E>),
-        );
-
-        let world = self.world_mut();
-        let is_startup = spec.is_startup;
-
-        // Check deps
-        let mut graph = world.get_resource_or_init::<DependencyGraph>();
-        register_service_dep(
-            &mut graph,
-            &handle.clone().into(),
-            spec.deps.iter().collect(),
-        )
-        .expect("Dependencies are invalid.");
-
-        // Insert service as resource
-        let service = Service::from_spec(spec);
-        world.insert_resource(service);
-
-        // Initialize on startup
-        if is_startup {
-            world.schedule_scope(Startup, |_world, sched| {
-                debug!("{} will initialize at startup.", handle);
-                sched.add_systems(move |mut commands: Commands| {
-                    commands.init_service(ServiceHandle::<T, D, E>::const_default());
-                });
-            });
-        }
+impl ServiceAppExt for App {
+    fn register_service<T: Service>(&mut self) -> &mut Self {
+        T::register(self);
         self
     }
 }
