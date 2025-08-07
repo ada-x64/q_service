@@ -281,13 +281,13 @@ fn run_conditions() {
         .commands()
         .spin_service_up::<RunConditions>();
     app.update(); // service_initializing
-    busy_wait(100); // wait for it to be finished...
+    busy_wait(200); // wait for it to be finished...
     app.update(); // service_up, service_has_status(up)
     app.world_mut()
         .commands()
         .fail_service::<RunConditions>(ServiceError::Own("oh no".into()));
     app.update(); // deinit
-    busy_wait(100); // wait for it to be finished...
+    busy_wait(200); // wait for it to be finished...
     app.update(); // service_down, service_failed, service_failed_with
 
     let all_ok = Ran {

@@ -59,7 +59,7 @@ fn asset_dep() {
                 }
             });
         });
-    busy_wait(500);
+    busy_wait(1000); // wait extra long for CI
     app.update();
     app.world_mut()
         .service_scope::<AssetDep, _>(|world, service| {
@@ -90,7 +90,7 @@ fn persistent_asset() {
         .register_asset_loader(TestAssetLoader)
         .register_service::<AssetDep>();
     app.update();
-    busy_wait(500);
+    busy_wait(1000); // wait extra long for CI
     let mut handle = None;
     app.world_mut()
         .service_scope::<AssetDep, _>(|world, service| {
