@@ -93,16 +93,6 @@ jobs:
 
       # allow-branch HEAD is because GitHub actions switches
       # to the tag while building, which is a detached head
-      - name: "publish macros"
-        run: |-
-          cd macros && \
-          cargo release \
-            publish \
-            --all-features \
-            --allow-branch HEAD \
-            --no-confirm \
-            --no-verify \
-            --execute
       - name: "publish main crate"
         run: |-
           cargo release \
