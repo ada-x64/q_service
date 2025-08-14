@@ -147,7 +147,7 @@ impl DownReason {
 ///
 /// Services and their dependencies are stored as nodes within a dependency
 /// graph. All associated data is stored here for efficiency's sake.
-#[derive(Resource, Deref, DerefMut, Default)]
+#[derive(Resource, Deref, DerefMut, Default, Debug)]
 pub struct GraphDataCache(HashMap<NodeId, GraphData>);
 #[allow(missing_docs, reason = "obvious")]
 impl GraphDataCache {
