@@ -2,7 +2,6 @@ use crate::{prelude::*, spec::ServiceSpec};
 use bevy_app::prelude::*;
 use bevy_asset::{Asset, AssetPath, DirectAssetAccessExt};
 use bevy_ecs::{prelude::*, schedule::ScheduleLabel, system::ScheduleSystem};
-use tracing::debug;
 
 /// Used to scope systems, resources, and assets to a service.
 pub struct ServiceScope<'a, T: Service> {

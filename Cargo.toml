@@ -7,6 +7,9 @@ edition = "2024"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/ada-x64/q_service"
 
+[package.metadata.bevy_lint]
+panicking_methods = { level = "allow" }
+
 [dependencies]
 # keep these up-to-date
 tracing = { version = "0.1", default-features = false, features = [
